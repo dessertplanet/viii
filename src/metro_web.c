@@ -21,19 +21,18 @@
  * ---------------------------------------------------------------- */
 
 EM_JS(void, js_metro_start, (int index, double interval_ms), {
-  if (!Module._metroTimers) Module._metroTimers = {};
-  if (Module._metroTimers[index]) {
-    clearInterval(Module._metroTimers[index]);
+  if (Module._timerWorker) {
+    Module._timerWorker.postMessage({
+      type: 'startMetro', index: index, intervalMs: interval_ms
+    });
   }
-  Module._metroTimers[index] = setInterval(function() {
-    Module._viii_metro_tick(index);
-  }, interval_ms);
 });
 
 EM_JS(void, js_metro_stop, (int index), {
-  if (Module._metroTimers && Module._metroTimers[index]) {
-    clearInterval(Module._metroTimers[index]);
-    delete Module._metroTimers[index];
+  if (Module._timerWorker) {
+    Module._timerWorker.postMessage({
+      type: 'stopMetro', index: index
+    });
   }
 });
 

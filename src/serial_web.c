@@ -36,7 +36,7 @@ static uint16_t tx_r = 0;
  * RX buffer — filled by viii_serial_rx() from JS
  * ---------------------------------------------------------------- */
 
-#define SERIAL_RX_BUFSIZE 4096
+#define SERIAL_RX_BUFSIZE 65536
 
 static uint8_t rx_buf[SERIAL_RX_BUFSIZE];
 static uint16_t rx_w = 0;

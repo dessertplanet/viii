@@ -10,7 +10,11 @@
   <header>
     <div class="header-left">
       <span class="logo">viii</span>
-      <span class="status" id="status">not connected</span>
+      <button id="gridBtn" class="header-btn">connect grid</button>
+      <span class="status-pill" id="statusPill">
+        <span class="status-dot" id="statusDot"></span>
+        <span class="status-text" id="statusText">not connected</span>
+      </span>
     </div>
     <div class="header-right">
       <select id="midiOut" title="MIDI output">
@@ -19,7 +23,6 @@
       <select id="midiIn" title="MIDI input">
         <option value="">midi in: none</option>
       </select>
-      <button id="gridBtn" class="header-btn">connect grid</button>
     </div>
   </header>
 
@@ -27,8 +30,8 @@
     <div id="filePane" class="pane">
       <div class="pane-header">
         <span>files</span>
-        <button id="refreshFilesBtn" class="small-btn" title="refresh">↻</button>
-        <button id="uploadBtn" class="small-btn" title="upload">+</button>
+        <button id="refreshFilesBtn" class="small-btn" title="refresh file list">↻</button>
+        <button id="uploadBtn" class="small-btn" title="upload lua file">+</button>
       </div>
       <div id="fileList" class="file-list"></div>
       <div id="fileSpace" class="file-space">free: --</div>
@@ -37,6 +40,13 @@
 
     <div id="replPane" class="pane">
       <div id="output" class="output"></div>
+      <div class="repl-toolbar">
+        <button id="restartBtn" class="toolbar-btn" title="restart (^^i)">restart</button>
+        <button id="cleanBtn" class="toolbar-btn" title="clean restart (^^c)">clean</button>
+        <button id="clearBtn" class="toolbar-btn" title="clear output">clear</button>
+        <div class="toolbar-spacer"></div>
+        <button id="reformatBtn" class="toolbar-btn toolbar-danger" title="reformat filesystem">reformat</button>
+      </div>
       <div class="input-row">
         <span class="prompt">&gt;&gt;</span>
         <input type="text" id="replInput" class="repl-input"

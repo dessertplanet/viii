@@ -68,9 +68,12 @@
   // ================================================================
 
   let wasm = null;
-  let loopInterval = null;
+  let timerWorker = null;
 
   async function initWasm() {
+    // create timer worker (not throttled in background tabs)
+    timerWorker = new Worker('timer-worker.js');
+
     wasm = await createVIII({
       // WASM → JS callbacks (set on Module before instantiation)
       onSerialTx: function (text) {
@@ -109,16 +112,26 @@
     // initialize the iii VM
     wasm._viii_init();
 
-    // start the main loop at ~250Hz
-    loopInterval = setInterval(() => {
+    // expose worker on Module so EM_JS in metro_web.c can find it
+    wasm._timerWorker = timerWorker;
+
+    // route worker messages to WASM
+    timerWorker.onmessage = function (e) {
+      if (!wasm) return;
       try {
-        wasm._viii_loop();
-      } catch (e) {
-        console.error('viii_loop error:', e);
-        appendOutput('\n-- loop error: ' + e.message + '\n');
-        clearInterval(loopInterval);
+        if (e.data.type === 'loop') {
+          wasm._viii_loop();
+        } else if (e.data.type === 'metro') {
+          wasm._viii_metro_tick(e.data.index);
+        }
+      } catch (err) {
+        console.error('worker callback error:', err);
+        appendOutput('\n-- error: ' + err.message + '\n');
       }
-    }, 4);
+    };
+
+    // start the main loop at ~250Hz via worker
+    timerWorker.postMessage({ type: 'startLoop', intervalMs: 4 });
 
     appendOutput('//// viii ready\n');
     appendOutput('//// connect a monome grid to begin\n');
@@ -139,6 +152,7 @@
   // -- Lua capture state --
   let pendingCapture = null;
   let captureSeq = 0;
+  let serialLineBuf = '';
 
   function appendOutput(text) {
     if (!outputEl) return;
@@ -148,23 +162,23 @@
 
   /**
    * handleSerialOutput — routes VM serial output.
+   * Buffers incoming text and processes complete lines.
    * If a capture is active, lines between sentinel tokens are collected
    * and resolved via promise. Everything else goes to the terminal.
    */
   function handleSerialOutput(text) {
     if (!text) return;
 
-    // serial output may contain multiple lines or partial lines.
-    // Buffer into lines for capture matching.
-    const lines = text.split('\n');
-    for (let i = 0; i < lines.length; i++) {
-      const line = lines[i];
-      // skip empty trailing split artifact
-      if (i === lines.length - 1 && line === '') continue;
+    serialLineBuf += text;
+
+    let newlineIdx;
+    while ((newlineIdx = serialLineBuf.indexOf('\n')) !== -1) {
+      const raw = serialLineBuf.substring(0, newlineIdx);
+      serialLineBuf = serialLineBuf.substring(newlineIdx + 1);
+      const line = raw.replace(/\r/g, '');
 
       if (pendingCapture) {
-        if (line.trim() === pendingCapture.endToken) {
-          // capture complete
+        if (line === pendingCapture.endToken) {
           clearTimeout(pendingCapture.timeoutId);
           const resolve = pendingCapture.resolve;
           const captured = pendingCapture.lines;
@@ -172,7 +186,7 @@
           resolve(captured);
           continue;
         }
-        if (line.trim() === pendingCapture.beginToken) {
+        if (line === pendingCapture.beginToken) {
           pendingCapture.started = true;
           continue;
         }
@@ -182,7 +196,18 @@
         }
       }
       // not captured — show in terminal
-      appendOutput(line + (i < lines.length - 1 ? '\n' : ''));
+      appendOutput(line + '\n');
+    }
+
+    // flush partial line after a short delay (same pattern as web-diii)
+    if (serialLineBuf && !pendingCapture) {
+      clearTimeout(handleSerialOutput._flushTimer);
+      handleSerialOutput._flushTimer = setTimeout(() => {
+        if (serialLineBuf && !pendingCapture) {
+          appendOutput(serialLineBuf);
+          serialLineBuf = '';
+        }
+      }, 40);
     }
   }
 
@@ -281,7 +306,8 @@
   const MONOME_VID = 0xCAFE;
   const MONOME_PID = 0x1110; // monome mode
   const gridBtn = document.getElementById('gridBtn');
-  const statusEl = document.getElementById('status');
+  const statusDot = document.getElementById('statusDot');
+  const statusText = document.getElementById('statusText');
 
   let gridPort = null;
   let gridReader = null;
@@ -306,24 +332,30 @@
       gridWriter = gridPort.writable.getWriter();
       gridConnected = true;
       gridBtn.textContent = 'disconnect grid';
-      statusEl.textContent = 'detecting grid...';
+      statusText.textContent = 'detecting grid...';
 
       // tell WASM the grid is connected
       wasm._viii_grid_connect();
 
-      // wait briefly for size response, then update status
-      setTimeout(() => {
+      // start reading first so responses arrive
+      gridReadLoop();
+
+      // poll for size response
+      let attempts = 0;
+      const sizeCheck = setInterval(() => {
+        attempts++;
         const sx = wasm._viii_grid_size_x();
         const sy = wasm._viii_grid_size_y();
-        statusEl.textContent = `grid ${sx}×${sy} connected`;
-        appendOutput(`-- grid connected (${sx}×${sy})\n`);
-      }, 200);
-
-      // start reading
-      gridReadLoop();
+        if ((sx !== 16 || sy !== 8) || attempts >= 20) {
+          clearInterval(sizeCheck);
+          statusDot.classList.add('connected');
+          statusText.textContent = 'grid ' + sx + '×' + sy;
+          appendOutput('-- grid connected (' + sx + '×' + sy + ')\n');
+        }
+      }, 100);
     } catch (e) {
       console.error('Grid connect error:', e);
-      statusEl.textContent = 'connection failed';
+      statusText.textContent = 'connection failed';
       appendOutput('-- grid connection failed: ' + e.message + '\n');
     }
   }
@@ -341,7 +373,8 @@
     }
 
     gridBtn.textContent = 'connect grid';
-    statusEl.textContent = 'disconnected';
+    statusDot.classList.remove('connected');
+    statusText.textContent = 'disconnected';
     appendOutput('-- grid disconnected\n');
   }
 
@@ -372,11 +405,7 @@
   }
 
   function gridSerialWrite(bytes) {
-    if (!gridWriter || !gridConnected) {
-      console.warn('gridSerialWrite: not connected, dropping', bytes.length, 'bytes');
-      return;
-    }
-    console.log('gridSerialWrite:', bytes.length, 'bytes', Array.from(bytes.slice(0, 8)));
+    if (!gridWriter || !gridConnected) return;
     gridWriter.write(bytes).catch(e => {
       console.error('Grid write error:', e);
     });
@@ -486,6 +515,8 @@
 
   let fileEntries = [];
   let fileFreeSpace = null;
+  let firstBadgeFileNames = new Set();
+  let openMenuFile = null;
 
   async function refreshFileList() {
     if (!wasm) return;
@@ -516,10 +547,37 @@
       fileFreeSpace = parseInt(memLines[0], 10);
       if (!isFinite(fileFreeSpace)) fileFreeSpace = null;
 
+      // detect which file is set as 'first'
+      try {
+        await refreshFirstBadge();
+      } catch { firstBadgeFileNames = new Set(); }
+
       renderFileList();
     } catch (e) {
       console.error('refreshFileList error:', e);
     }
+  }
+
+  async function refreshFirstBadge() {
+    const hasInit = fileEntries.some(e => e.name === 'init.lua');
+    if (!hasInit) { firstBadgeFileNames = new Set(); return; }
+
+    const initLines = await executeLuaCapture('cat("init.lua")');
+    const content = initLines.join('\n')
+      .replace(/--\[\[[\s\S]*?\]\]/g, '')
+      .replace(/--.*$/gm, '');
+    const match = content.match(/fs_run_file\s*\(\s*(['"])([^'"]+)\1\s*\)/);
+    const target = match?.[2]?.trim() || '';
+    if (target && fileEntries.some(e => e.name === target)) {
+      firstBadgeFileNames = new Set([target]);
+    } else {
+      firstBadgeFileNames = new Set();
+    }
+  }
+
+  function luaQuote(val) {
+    return "'" + String(val).replace(/\\/g, '\\\\').replace(/'/g, "\\'")
+      .replace(/\r/g, '\\r').replace(/\n/g, '\\n') + "'";
   }
 
   function renderFileList() {
@@ -528,51 +586,204 @@
 
     if (fileEntries.length === 0) {
       const empty = document.createElement('div');
-      empty.className = 'file-list-item';
-      empty.style.color = 'var(--dim)';
+      empty.className = 'file-list-empty';
       empty.textContent = 'no files';
       fileListEl.appendChild(empty);
-    } else {
-      // sort: lib.lua first, then init.lua, then alphabetical
-      const sorted = [...fileEntries].sort((a, b) => {
-        const order = (n) => n === 'lib.lua' ? 0 : n === 'init.lua' ? 1 : 2;
-        const d = order(a.name) - order(b.name);
-        return d !== 0 ? d : a.name.localeCompare(b.name);
+      updateFileSpace();
+      return;
+    }
+
+    // sort: lib.lua, init.lua, then alphabetical
+    const sorted = [...fileEntries].sort((a, b) => {
+      const order = (n) => n === 'lib.lua' ? 0 : n === 'init.lua' ? 1 : 2;
+      const d = order(a.name) - order(b.name);
+      return d !== 0 ? d : a.name.localeCompare(b.name);
+    });
+
+    const pinnedCount = sorted.filter(e =>
+      e.name === 'lib.lua' || e.name === 'init.lua').length;
+
+    for (let idx = 0; idx < sorted.length; idx++) {
+      const entry = sorted[idx];
+      const isLib = entry.name === 'lib.lua';
+      const isInit = entry.name === 'init.lua';
+
+      const row = document.createElement('div');
+      row.className = 'file-row';
+
+      // play button (not for lib.lua)
+      if (!isLib) {
+        const playBtn = document.createElement('button');
+        playBtn.className = 'file-play-btn';
+        playBtn.type = 'button';
+        playBtn.textContent = '▶';
+        playBtn.title = 'run ' + entry.name;
+        playBtn.addEventListener('click', (e) => {
+          e.stopPropagation();
+          runFile(entry.name);
+        });
+        row.appendChild(playBtn);
+      }
+
+      // label
+      const label = document.createElement('div');
+      label.className = 'file-label';
+      label.textContent = entry.name;
+      row.appendChild(label);
+
+      // first badge
+      if (!isInit && !isLib && firstBadgeFileNames.has(entry.name)) {
+        const badge = document.createElement('span');
+        badge.className = 'file-first-pill';
+        badge.textContent = 'first';
+        row.appendChild(badge);
+      }
+
+      // size
+      const sizeEl = document.createElement('span');
+      sizeEl.className = 'file-size-label';
+      const kb = entry.size / 1024;
+      sizeEl.textContent = kb >= 1 ? Math.round(kb) + 'kb' : entry.size + 'b';
+      row.appendChild(sizeEl);
+
+      // kebab menu button
+      const menuBtn = document.createElement('button');
+      menuBtn.className = 'file-menu-btn';
+      menuBtn.type = 'button';
+      menuBtn.textContent = '⋯';
+      menuBtn.title = 'actions for ' + entry.name;
+      menuBtn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        openMenuFile = openMenuFile === entry.name ? null : entry.name;
+        renderFileList();
       });
+      row.appendChild(menuBtn);
 
-      for (const entry of sorted) {
-        const row = document.createElement('div');
-        row.className = 'file-list-item';
+      // context menu
+      const menu = document.createElement('div');
+      menu.className = 'file-menu' + (openMenuFile === entry.name ? ' open' : '');
 
-        const label = document.createElement('span');
-        label.textContent = entry.name;
-        row.appendChild(label);
+      const actions = isInit
+        ? [
+          { label: 'read', fn: () => showFile(entry.name) },
+          { label: 'download', fn: () => downloadFile(entry.name) },
+          { label: 'delete', fn: () => deleteFile(entry.name), danger: true }
+        ]
+        : isLib
+          ? [
+            { label: 'read', fn: () => showFile(entry.name) },
+            { label: 'download', fn: () => downloadFile(entry.name) }
+          ]
+          : [
+            { label: 'run', fn: () => runFile(entry.name) },
+            { label: 'first', fn: () => configureFirst(entry.name) },
+            { label: 'read', fn: () => showFile(entry.name) },
+            { label: 'download', fn: () => downloadFile(entry.name) },
+            { label: 'delete', fn: () => deleteFile(entry.name), danger: true }
+          ];
 
-        const size = document.createElement('span');
-        size.className = 'file-size';
-        size.textContent = Math.round(entry.size / 1024) + 'kb';
-        row.appendChild(size);
+      for (const action of actions) {
+        const item = document.createElement('button');
+        item.type = 'button';
+        item.className = 'file-menu-item' + (action.danger ? ' danger' : '');
+        item.textContent = action.label;
+        item.addEventListener('click', async (e) => {
+          e.stopPropagation();
+          openMenuFile = null;
+          renderFileList();
+          await action.fn();
+        });
+        menu.appendChild(item);
+      }
 
-        // click to run (except lib.lua)
-        if (entry.name !== 'lib.lua') {
-          row.style.cursor = 'pointer';
-          row.addEventListener('click', () => {
-            appendOutput('-- running ' + entry.name + '\n');
-            executeLua('fs_run_file("' + entry.name + '")');
-          });
-        }
+      row.appendChild(menu);
+      fileListEl.appendChild(row);
 
-        fileListEl.appendChild(row);
+      // separator after pinned files
+      if (pinnedCount > 0 && idx === pinnedCount - 1 && idx < sorted.length - 1) {
+        const sep = document.createElement('div');
+        sep.className = 'file-list-separator';
+        fileListEl.appendChild(sep);
       }
     }
 
-    // update free space footer
-    if (fileSpaceEl) {
-      if (fileFreeSpace != null) {
-        fileSpaceEl.textContent = 'free: ' + Math.round(fileFreeSpace / 1024) + 'kb';
-      } else {
-        fileSpaceEl.textContent = 'free: --';
+    updateFileSpace();
+  }
+
+  function updateFileSpace() {
+    if (!fileSpaceEl) return;
+    if (fileFreeSpace != null) {
+      fileSpaceEl.textContent = 'free: ' + Math.round(fileFreeSpace / 1024) + 'kb';
+    } else {
+      fileSpaceEl.textContent = 'free: --';
+    }
+  }
+
+  // close menu on outside click
+  document.addEventListener('click', (e) => {
+    if (openMenuFile && !e.target.closest('.file-row')) {
+      openMenuFile = null;
+      renderFileList();
+    }
+  });
+
+  async function runFile(name) {
+    appendOutput('-- running ' + name + '...\n');
+    sendReplLine('^^c');
+    await delay(500);
+    await executeLua('fs_run_file("lib.lua")');
+    await delay(100);
+    await executeLua('fs_run_file(' + luaQuote(name) + ')');
+  }
+
+  async function showFile(name) {
+    try {
+      const lines = await executeLuaCapture('cat(' + luaQuote(name) + ')');
+      appendOutput('\n' + name + ' contents:\n\n');
+      for (const line of lines) {
+        appendOutput(line + '\n');
       }
+      appendOutput('\n');
+    } catch (e) {
+      appendOutput('-- read error: ' + e.message + '\n');
+    }
+  }
+
+  async function downloadFile(name) {
+    try {
+      const lines = await executeLuaCapture('cat(' + luaQuote(name) + ')');
+      const content = lines.join('\n');
+      const blob = new Blob([content], { type: 'text/plain;charset=utf-8' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url; a.download = name;
+      document.body.appendChild(a); a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+      appendOutput('-- downloaded ' + name + '\n');
+    } catch (e) {
+      appendOutput('-- download error: ' + e.message + '\n');
+    }
+  }
+
+  async function configureFirst(name) {
+    try {
+      await executeLuaCapture('first(' + luaQuote(name) + ')');
+      appendOutput('-- ' + name + ' will run at startup\n');
+      await refreshFileList();
+    } catch (e) {
+      appendOutput('-- first error: ' + e.message + '\n');
+    }
+  }
+
+  async function deleteFile(name) {
+    if (!confirm('Delete ' + name + '?')) return;
+    try {
+      await executeLuaCapture('fs_remove_file(' + luaQuote(name) + ')');
+      appendOutput('-- deleted ' + name + '\n');
+      await refreshFileList();
+    } catch (e) {
+      appendOutput('-- delete error: ' + e.message + '\n');
     }
   }
 
@@ -598,7 +809,7 @@
     appendOutput('-- uploading ' + name + '...\n');
 
     // delete existing file first
-    await executeLuaCapture('fs_remove_file("' + name + '")');
+    await executeLuaCapture('fs_remove_file(' + luaQuote(name) + ')');
 
     // set filename: ^^s, <name>, ^^f
     sendReplLine('^^s');
@@ -611,8 +822,10 @@
     // send file content: ^^s, <lines>, ^^w
     sendReplLine('^^s');
     await delay(50);
-    for (const line of text.split('\n')) {
-      sendReplLine(line);
+    const lines = text.split('\n');
+    for (let i = 0; i < lines.length; i++) {
+      sendReplLine(lines[i]);
+      if (i % 50 === 49) await delay(1);
     }
     await delay(100);
     sendReplLine('^^w');
@@ -624,6 +837,41 @@
   function delay(ms) {
     return new Promise(resolve => setTimeout(resolve, ms));
   }
+
+  // ================================================================
+  // REPL toolbar buttons
+  // ================================================================
+
+  const restartBtn = document.getElementById('restartBtn');
+  const cleanBtn = document.getElementById('cleanBtn');
+  const clearBtn = document.getElementById('clearBtn');
+  const reformatBtn = document.getElementById('reformatBtn');
+
+  restartBtn.addEventListener('click', () => {
+    appendOutput('> ^^i\n');
+    sendReplLine('^^i');
+    setTimeout(() => refreshFileList(), 500);
+  });
+
+  cleanBtn.addEventListener('click', () => {
+    appendOutput('> ^^c\n');
+    sendReplLine('^^c');
+  });
+
+  clearBtn.addEventListener('click', () => {
+    if (outputEl) outputEl.textContent = '';
+  });
+
+  reformatBtn.addEventListener('click', async () => {
+    if (!confirm('Reformat filesystem? This will erase all files.')) return;
+    try {
+      await executeLuaCapture('fs_reformat()');
+      appendOutput('-- filesystem reformatted\n');
+      await refreshFileList();
+    } catch (e) {
+      appendOutput('-- reformat error: ' + e.message + '\n');
+    }
+  });
 
   // ================================================================
   // Boot
