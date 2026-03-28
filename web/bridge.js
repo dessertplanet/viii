@@ -82,10 +82,6 @@
       onGridTx: function (bytes) {
         gridSerialWrite(bytes);
       },
-      onGridLedState: function (leds, sx, sy) {
-        // optional: could render to canvas here
-        void leds; void sx; void sy;
-      },
       onMidiTx: function (d1, d2, d3) {
         midiSend(d1, d2, d3);
       },
@@ -246,13 +242,6 @@
 
       sendReplLine('print("' + endToken + '")');
     });
-  }
-
-  /**
-   * executeLua — fire-and-forget Lua command (no capture).
-   */
-  function executeLua(command) {
-    sendReplLine(command);
   }
 
   function sendReplLine(line) {
@@ -731,9 +720,9 @@
     appendOutput('-- running ' + name + '...\n');
     sendReplLine('^^c');
     await delay(500);
-    await executeLua('fs_run_file("lib.lua")');
+    sendReplLine('fs_run_file("lib.lua")');
     await delay(100);
-    await executeLua('fs_run_file(' + luaQuote(name) + ')');
+    sendReplLine('fs_run_file(' + luaQuote(name) + ')');
   }
 
   async function showFile(name) {

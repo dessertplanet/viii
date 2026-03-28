@@ -84,7 +84,7 @@ EXPORTED_FUNCTIONS = \
 	_malloc,\
 	_free
 
-EXPORTED_RUNTIME = ccall,cwrap,getValue,setValue,UTF8ToString,stringToUTF8,stringToNewUTF8,lengthBytesUTF8
+EXPORTED_RUNTIME = ccall,cwrap,UTF8ToString,stringToUTF8,lengthBytesUTF8
 
 EMFLAGS = \
 	-s EXPORTED_FUNCTIONS='[$(EXPORTED_FUNCTIONS)]' \
@@ -94,14 +94,13 @@ EMFLAGS = \
 	-s STACK_SIZE=65536 \
 	-s NO_EXIT_RUNTIME=1 \
 	-s MODULARIZE=1 \
-	-s EXPORT_NAME=createVIII \
-	--js-library src/js_bridge.js
+	-s EXPORT_NAME=createVIII
 
 .PHONY: all clean serve
 
 all: web/viii.js
 
-web/viii.js: $(ALL_SOURCES) src/js_bridge.js
+web/viii.js: $(ALL_SOURCES)
 	@mkdir -p web
 	emcc $(CFLAGS) $(INCLUDES) $(EMFLAGS) $(ALL_SOURCES) -o $@
 

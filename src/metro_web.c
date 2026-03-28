@@ -66,7 +66,6 @@ void metro_task(void) {
       metros[i].pending = false;
 
       int current_count = metros[i].count;
-      int stage;
 
       if (current_count > 0) {
         metros[i].count--;
@@ -76,17 +75,11 @@ void metro_task(void) {
         }
       }
 
-      if (current_count >= 0) {
-        metros[i].tick_count++;
-        stage = metros[i].tick_count;
-      } else {
-        metros[i].tick_count++;
-        stage = metros[i].tick_count;
-      }
+      metros[i].tick_count++;
 
       /* match firmware: index is 0-based here, vm_handle_metro
        * adds 1 for Lua's 1-based indexing */
-      vm_handle_metro(i, stage);
+      vm_handle_metro(i, metros[i].tick_count);
     }
   }
 }

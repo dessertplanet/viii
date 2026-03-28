@@ -33,13 +33,6 @@ EM_JS(void, js_grid_tx, (const uint8_t *data, uint32_t len), {
   }
 });
 
-EM_JS(void, js_grid_led_state, (const uint8_t *leds, int sx, int sy), {
-  if (Module.onGridLedState) {
-    var arr = new Uint8Array(HEAPU8.buffer, leds, sx * sy).slice();
-    Module.onGridLedState(arr, sx, sy);
-  }
-});
-
 /* ----------------------------------------------------------------
  * Grid state
  * ---------------------------------------------------------------- */
@@ -106,9 +99,6 @@ static void grid_send_refresh(void) {
       grid_send(buf, n);
     }
   }
-
-  /* notify JS of LED state for optional canvas rendering */
-  js_grid_led_state(grid_led, grid_size_x_val, grid_size_y_val);
 }
 
 /* ----------------------------------------------------------------
@@ -305,10 +295,6 @@ void device_task(void) {
     grid_send_refresh();
     grid_refresh_pending = false;
   }
-}
-
-void device_handle_serial(uint8_t *data, uint32_t len) {
-  (void)data; (void)len;
 }
 
 /* ----------------------------------------------------------------

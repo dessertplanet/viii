@@ -52,12 +52,6 @@ static void serial_rx_noop(uint8_t *data, uint32_t len) {
 
 static serial_rx_callback_t rx_callback = &serial_rx_noop;
 
-static void line_state_cb_noop(bool dtr, bool rts) {
-  (void)dtr; (void)rts;
-}
-
-static serial_line_state_callback_t line_state_callback = &line_state_cb_noop;
-
 /* ----------------------------------------------------------------
  * Public API
  * ---------------------------------------------------------------- */
@@ -105,7 +99,7 @@ void serial_set_rx_callback(serial_rx_callback_t callback) {
 }
 
 void serial_set_line_state_callback(serial_line_state_callback_t callback) {
-  line_state_callback = callback;
+  (void)callback; /* not applicable in browser */
 }
 
 /* ----------------------------------------------------------------
