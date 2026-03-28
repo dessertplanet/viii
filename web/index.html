@@ -56,6 +56,15 @@
     </div>
   </main>
 
+  <div role="alertdialog" aria-modal="true" id="browserWarning" class="modal" style="display: none;">
+    <div class="modal-content">
+      <h2>browser not supported</h2>
+      <p>viii requires the Web Serial API, which is only available in Chromium-based browsers.</p>
+      <p>please use Chrome, Edge, or Opera.</p>
+      <button type="button" id="closeWarning" class="modal-btn">close</button>
+    </div>
+  </div>
+
   <script src="viii.js"></script>
   <script src="bridge.js"></script>
 </body>

@@ -115,7 +115,8 @@ typedef enum {
 
   /* encoder (device -> host) */
   MONOME_ENC_DELTA           = 0x50,
-  MONOME_ENC_KEY             = 0x51,
+  MONOME_ENC_KEY_UP          = 0x51,
+  MONOME_ENC_KEY_DOWN        = 0x52,
 
   /* ring LED (host -> device) */
   MONOME_RING_SET            = 0x90,
@@ -440,7 +441,7 @@ uint32_t monome_encode_tilt(uint8_t *buf, uint8_t n, int16_t x, int16_t y,
 /* [0x50, n, delta] — 3 bytes.  delta: signed (-128..127) */
 uint32_t monome_encode_enc_delta(uint8_t *buf, uint8_t n, int8_t delta);
 
-/* [0x51, n, z] — 3 bytes */
+/* [0x51|0x52, n] — 2 bytes.  z: 0 = up, nonzero = down */
 uint32_t monome_encode_enc_key(uint8_t *buf, uint8_t n, uint8_t z);
 
 /* --- ring LED commands (host -> device) --- */
@@ -526,7 +527,8 @@ static uint8_t monome__device_msg_len(uint8_t cmd) {
   case 0x20: return 3;  /* key up: cmd, x, y                     */
   case 0x21: return 3;  /* key down: cmd, x, y                   */
   case 0x50: return 3;  /* enc delta: cmd, n, delta              */
-  case 0x51: return 3;  /* enc key: cmd, n, z                    */
+  case 0x51: return 2;  /* enc key up: cmd, n                    */
+  case 0x52: return 2;  /* enc key down: cmd, n                  */
   case 0x60: return 8;  /* tilt: cmd, n, xH, xL, yH, yL, zH, zL */
   default:   return 0;
   }
@@ -812,7 +814,12 @@ static void monome__dispatch(monome_parser_t *p, int from_host) {
     case 0x51:
       ev.type = MONOME_EVENT_ENC_KEY;
       ev.data.enc_key.n = b[1];
-      ev.data.enc_key.z = b[2];
+      ev.data.enc_key.z = 0;
+      break;
+    case 0x52:
+      ev.type = MONOME_EVENT_ENC_KEY;
+      ev.data.enc_key.n = b[1];
+      ev.data.enc_key.z = 1;
       break;
 
     /* tilt */
@@ -1098,7 +1105,9 @@ uint32_t monome_encode_enc_delta(uint8_t *buf, uint8_t n, int8_t delta) {
 }
 
 uint32_t monome_encode_enc_key(uint8_t *buf, uint8_t n, uint8_t z) {
-  buf[0] = 0x51; buf[1] = n; buf[2] = z; return 3;
+  buf[0] = z ? 0x52 : 0x51;
+  buf[1] = n;
+  return 2;
 }
 
 /* ----------------------------------------------------------------

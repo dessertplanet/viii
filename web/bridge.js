@@ -374,12 +374,21 @@
         attempts++;
         const sx = wasm._viii_grid_size_x();
         const sy = wasm._viii_grid_size_y();
-        if ((sx !== 16 || sy !== 8) || attempts >= 20) {
+        const enc = wasm._viii_arc_enc_count();
+        const isArc = enc > 0;
+        const isGrid = !isArc && (sx !== 16 || sy !== 8);
+        if (isArc || isGrid || attempts >= 20) {
           clearInterval(sizeCheck);
           statusDot.classList.add('connected');
-          statusText.textContent = 'grid ' + sx + '×' + sy;
-          if (!auto) appendOutput('-- grid connected (' + sx + '×' + sy + ')\n');
-          else appendOutput('-- grid reconnected (' + sx + '×' + sy + ')\n');
+          let label;
+          if (isArc) {
+            label = 'arc ' + enc;
+          } else {
+            label = 'grid ' + sx + '×' + sy;
+          }
+          statusText.textContent = label;
+          const verb = auto ? 'reconnected' : 'connected';
+          appendOutput('-- ' + label + ' ' + verb + '\n');
         }
       }, 100);
     } catch (e) {
@@ -1008,8 +1017,12 @@
   // ================================================================
 
   if (!('serial' in navigator)) {
-    appendOutput('ERROR: Web Serial API not available.\n');
-    appendOutput('Use Chrome, Edge, or Opera.\n');
+    const warning = document.getElementById('browserWarning');
+    if (warning) warning.style.display = 'flex';
+    const closeBtn = document.getElementById('closeWarning');
+    if (closeBtn) closeBtn.addEventListener('click', () => {
+      warning.style.display = 'none';
+    });
     gridBtn.disabled = true;
     uploadBtn.disabled = true;
   }

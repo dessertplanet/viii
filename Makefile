@@ -78,6 +78,7 @@ EXPORTED_FUNCTIONS = \
 	_viii_grid_disconnect,\
 	_viii_grid_size_x,\
 	_viii_grid_size_y,\
+	_viii_arc_enc_count,\
 	_viii_midi_rx,\
 	_viii_metro_tick,\
 	_viii_fs_preload,\
