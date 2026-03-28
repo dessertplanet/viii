@@ -135,6 +135,7 @@
     appendOutput('-- hardware communication happens using the monome binary protocol.\n');
     appendOutput('-- midi goes to host apps or connected instruments via webmidi.\n');
     appendOutput('-- the filesystem persists in your browser.\n');
+    appendOutput('-- scripts can run and send/recieve midi data with no grid/arc connected.\n');
     appendOutput('\n');
     appendOutput('//// connect a grid or arc in monome/serialosc mode to begin.\n');
     appendOutput('\n');

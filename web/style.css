@@ -129,25 +129,16 @@ main {
   border-bottom: 1px solid var(--border);
 }
 
-.pane-toggle {
-  background: none;
-  border: none;
-  color: var(--dim);
-  cursor: pointer;
-  padding: 4px 6px;
+.file-icon {
   display: flex;
   align-items: center;
-  border-radius: 3px;
-}
-
-.pane-toggle:hover {
-  color: var(--accent);
-  background: var(--btn-hover);
+  padding: 4px 6px;
+  color: var(--dim);
 }
 
 .file-icon svg {
-  width: 16px;
-  height: 16px;
+  width: 18px;
+  height: 18px;
   display: block;
 }
 
@@ -249,8 +240,8 @@ main {
   border: none;
   color: var(--dim);
   cursor: pointer;
-  font-size: 14px;
-  padding: 4px 5px;
+  font-size: 18px;
+  padding: 4px 6px;
   font-family: var(--font);
   border-radius: 3px;
   flex-shrink: 0;
