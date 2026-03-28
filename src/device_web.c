@@ -558,9 +558,15 @@ void viii_grid_connect(void) {
   grid_connected = true;
   monome_parser_reset(&grid_parser);
 
-  /* clear state */
+  /* reset detection state for new device */
+  grid_size_x_val = 0;
+  grid_size_y_val = 0;
+  arc_enc_count = 0;
+
+  /* clear LED state */
   memset(grid_led, 0, sizeof(grid_led));
   memset(arc_ring, 0, sizeof(arc_ring));
+  for (int i = 0; i < MAX_ENCODERS; i++) { arc_res_val[i] = 1; arc_accum[i] = 0; }
 
   /* query capabilities */
   n = monome_encode_query(buf);

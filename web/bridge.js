@@ -343,6 +343,23 @@
         gridPort = await navigator.serial.requestPort({
           filters: [{ usbVendorId: MONOME_VID, usbProductId: MONOME_PID }]
         });
+      } else if (gridPort) {
+        // try to find the same port again via getPorts()
+        try {
+          const ports = await navigator.serial.getPorts();
+          const match = ports.find(p => {
+            const info = getPortInfo(p);
+            return info &&
+              info.usbVendorId === MONOME_VID &&
+              info.usbProductId === MONOME_PID;
+          });
+          if (match) gridPort = match;
+        } catch { /* use existing gridPort */ }
+      }
+
+      if (!gridPort) {
+        scheduleGridReconnect(1500);
+        return;
       }
 
       await gridPort.open({
@@ -360,15 +377,22 @@
       isManualDisconnect = false;
       gridSelectedPortInfo = getPortInfo(gridPort);
       gridBtn.textContent = 'disconnect';
-      statusText.textContent = 'detecting grid...';
+      statusText.textContent = 'detecting...';
 
-      // tell WASM the grid is connected
+      // tell WASM the grid is connected (sends queries)
       wasm._viii_grid_connect();
 
       // start reading first so responses arrive
       gridReadLoop();
 
-      // poll for size response
+      // re-send queries after a short delay (device may still be booting)
+      if (auto) {
+        setTimeout(() => {
+          if (gridConnected) wasm._viii_grid_connect();
+        }, 300);
+      }
+
+      // poll for capability response
       let attempts = 0;
       const sizeCheck = setInterval(() => {
         attempts++;
@@ -376,15 +400,18 @@
         const sy = wasm._viii_grid_size_y();
         const enc = wasm._viii_arc_enc_count();
         const isArc = enc > 0;
-        const isGrid = !isArc && (sx !== 16 || sy !== 8);
-        if (isArc || isGrid || attempts >= 20) {
+        const isGrid = !isArc && sx > 0 && sy > 0;
+        const detected = isArc || isGrid;
+        if (detected || attempts >= 30) {
           clearInterval(sizeCheck);
           statusDot.classList.add('connected');
           let label;
           if (isArc) {
             label = 'arc ' + enc;
-          } else {
+          } else if (isGrid) {
             label = 'grid ' + sx + '×' + sy;
+          } else {
+            label = 'connected';
           }
           statusText.textContent = label;
           const verb = auto ? 'reconnected' : 'connected';
@@ -393,8 +420,12 @@
       }, 100);
     } catch (e) {
       console.error('Grid connect error:', e);
-      statusText.textContent = 'connection failed';
-      appendOutput('-- grid connection failed: ' + e.message + '\n');
+      if (auto) {
+        scheduleGridReconnect(1500);
+      } else {
+        statusText.textContent = 'connection failed';
+        appendOutput('-- connection failed: ' + e.message + '\n');
+      }
     }
   }
 
@@ -406,22 +437,25 @@
       gridAutoReconnect = false;
       clearGridReconnectTimer();
     }
-    wasm._viii_grid_disconnect();
+    if (wasm) wasm._viii_grid_disconnect();
 
     try {
-      if (gridReader) { await gridReader.cancel(); gridReader = null; }
+      if (gridReader) { await gridReader.cancel().catch(() => {}); gridReader = null; }
       if (gridWriter) { gridWriter.releaseLock(); gridWriter = null; }
-      if (gridPort) { await gridPort.close(); gridPort = null; }
+      if (gridPort) { await gridPort.close().catch(() => {}); }
     } catch (e) {
       console.warn('Grid disconnect:', e);
     }
 
+    // clear port on manual disconnect so next connect prompts picker
+    if (manual) gridPort = null;
+
     gridBtn.textContent = 'connect';
     statusDot.classList.remove('connected');
     statusText.textContent = 'disconnected';
-    appendOutput('-- grid disconnected\n');
+    appendOutput('-- disconnected\n');
 
-    if (gridAutoReconnect && !isManualDisconnect && gridSelectedPortInfo) {
+    if (gridAutoReconnect && !isManualDisconnect) {
       scheduleGridReconnect();
     }
   }
@@ -442,22 +476,7 @@
     gridAutoReconnectTimer = setTimeout(async () => {
       gridAutoReconnectTimer = null;
       if (gridConnected || !gridAutoReconnect) return;
-      try {
-        const ports = await navigator.serial.getPorts();
-        const match = ports.find(p => {
-          const info = getPortInfo(p);
-          return info && gridSelectedPortInfo &&
-            info.usbVendorId === gridSelectedPortInfo.usbVendorId &&
-            info.usbProductId === gridSelectedPortInfo.usbProductId;
-        });
-        if (match) {
-          gridPort = match;
-          await gridConnect(true);
-        }
-      } catch (e) {
-        console.warn('auto-reconnect failed:', e);
-        scheduleGridReconnect(1500);
-      }
+      await gridConnect(true);
     }, delayMs || 900);
   }
 
@@ -479,7 +498,9 @@
     } catch (e) {
       if (gridConnected) {
         console.error('Grid read error:', e);
-        gridDisconnect();
+        // don't call gridDisconnect here — the serial 'disconnect'
+        // event will handle it. just mark as not connected.
+        gridConnected = false;
       }
     } finally {
       reader.releaseLock();
@@ -502,7 +523,7 @@
   // auto-reconnect on replug
   if ('serial' in navigator) {
     navigator.serial.addEventListener('connect', () => {
-      if (gridAutoReconnect && !gridConnected && gridSelectedPortInfo) {
+      if (gridAutoReconnect && !gridConnected) {
         scheduleGridReconnect(150);
       }
     });
