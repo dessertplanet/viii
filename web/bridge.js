@@ -137,6 +137,7 @@
     appendOutput('-- the filesystem persists in your browser.\n');
     appendOutput('\n');
     appendOutput('//// connect a grid or arc in monome/serialosc mode to begin.\n');
+    appendOutput('\n');
 
     // refresh file list after init
     setTimeout(() => refreshFileList(), 100);
@@ -269,7 +270,6 @@
       const code = replInput.value.trim();
       if (!code) return;
 
-      appendOutput('>> ' + code + '\n');
       if (commandHistory.length === 0 ||
           commandHistory[commandHistory.length - 1] !== code) {
         commandHistory.push(code);
@@ -277,7 +277,12 @@
       historyIndex = -1;
       replInput.value = '';
 
-      // send each line separately (supports multi-line paste)
+      // handle shortcut commands
+      if (/^h$/i.test(code)) { showHelp(); return; }
+      if (/^u$/i.test(code)) { openUploadPicker(); return; }
+      if (/^r$/i.test(code)) { refreshUploadAndRun(); return; }
+
+      appendOutput('>> ' + code + '\n');
       for (const line of code.split('\n')) {
         sendReplLine(line);
       }
@@ -298,6 +303,20 @@
     }
   });
 
+  function showHelp() {
+    appendOutput('\n');
+    appendOutput(' viii shortcuts:\n');
+    appendOutput(' h            show this help\n');
+    appendOutput(' u            open file picker to upload\n');
+    appendOutput(' r            re-upload and run last script\n');
+    appendOutput('\n');
+    appendOutput(' common iii commands:\n');
+    appendOutput(' ^^i          restart\n');
+    appendOutput(' ^^c          clean restart\n');
+    appendOutput(' help()       print iii api\n');
+    appendOutput('\n');
+  }
+
   // ================================================================
   // WebSerial — grid connection (binary monome protocol)
   // ================================================================
@@ -312,12 +331,18 @@
   let gridReader = null;
   let gridWriter = null;
   let gridConnected = false;
+  let gridAutoReconnect = false;
+  let gridAutoReconnectTimer = null;
+  let gridSelectedPortInfo = null;
+  let isManualDisconnect = false;
 
-  async function gridConnect() {
+  async function gridConnect(auto) {
     try {
-      gridPort = await navigator.serial.requestPort({
-        filters: [{ usbVendorId: MONOME_VID, usbProductId: MONOME_PID }]
-      });
+      if (!auto) {
+        gridPort = await navigator.serial.requestPort({
+          filters: [{ usbVendorId: MONOME_VID, usbProductId: MONOME_PID }]
+        });
+      }
 
       await gridPort.open({
         baudRate: 115200,
@@ -330,6 +355,9 @@
 
       gridWriter = gridPort.writable.getWriter();
       gridConnected = true;
+      gridAutoReconnect = true;
+      isManualDisconnect = false;
+      gridSelectedPortInfo = getPortInfo(gridPort);
       gridBtn.textContent = 'disconnect';
       statusText.textContent = 'detecting grid...';
 
@@ -349,7 +377,8 @@
           clearInterval(sizeCheck);
           statusDot.classList.add('connected');
           statusText.textContent = 'grid ' + sx + '×' + sy;
-          appendOutput('-- grid connected (' + sx + '×' + sy + ')\n');
+          if (!auto) appendOutput('-- grid connected (' + sx + '×' + sy + ')\n');
+          else appendOutput('-- grid reconnected (' + sx + '×' + sy + ')\n');
         }
       }, 100);
     } catch (e) {
@@ -359,8 +388,14 @@
     }
   }
 
-  async function gridDisconnect() {
+  async function gridDisconnect(manual) {
+    if (manual === undefined) manual = true;
     gridConnected = false;
+    isManualDisconnect = manual;
+    if (manual) {
+      gridAutoReconnect = false;
+      clearGridReconnectTimer();
+    }
     wasm._viii_grid_disconnect();
 
     try {
@@ -375,6 +410,45 @@
     statusDot.classList.remove('connected');
     statusText.textContent = 'disconnected';
     appendOutput('-- grid disconnected\n');
+
+    if (gridAutoReconnect && !isManualDisconnect && gridSelectedPortInfo) {
+      scheduleGridReconnect();
+    }
+  }
+
+  function getPortInfo(port) {
+    try { return port?.getInfo?.() || null; } catch { return null; }
+  }
+
+  function clearGridReconnectTimer() {
+    if (gridAutoReconnectTimer) {
+      clearTimeout(gridAutoReconnectTimer);
+      gridAutoReconnectTimer = null;
+    }
+  }
+
+  function scheduleGridReconnect(delayMs) {
+    if (gridConnected || gridAutoReconnectTimer) return;
+    gridAutoReconnectTimer = setTimeout(async () => {
+      gridAutoReconnectTimer = null;
+      if (gridConnected || !gridAutoReconnect) return;
+      try {
+        const ports = await navigator.serial.getPorts();
+        const match = ports.find(p => {
+          const info = getPortInfo(p);
+          return info && gridSelectedPortInfo &&
+            info.usbVendorId === gridSelectedPortInfo.usbVendorId &&
+            info.usbProductId === gridSelectedPortInfo.usbProductId;
+        });
+        if (match) {
+          gridPort = match;
+          await gridConnect(true);
+        }
+      } catch (e) {
+        console.warn('auto-reconnect failed:', e);
+        scheduleGridReconnect(1500);
+      }
+    }, delayMs || 900);
   }
 
   async function gridReadLoop() {
@@ -417,9 +491,14 @@
 
   // auto-reconnect on replug
   if ('serial' in navigator) {
+    navigator.serial.addEventListener('connect', () => {
+      if (gridAutoReconnect && !gridConnected && gridSelectedPortInfo) {
+        scheduleGridReconnect(150);
+      }
+    });
     navigator.serial.addEventListener('disconnect', (event) => {
       if (gridPort && event.target === gridPort) {
-        gridDisconnect();
+        gridDisconnect(false);
       }
     });
   }
@@ -449,8 +528,11 @@
   function refreshMidiPorts() {
     if (!midiAccess) return;
 
+    const savedOut = localStorage.getItem('viii.midiOut');
+    const savedIn = localStorage.getItem('viii.midiIn');
+
     // outputs
-    const prevOut = midiOutSelect.value;
+    const prevOut = midiOutSelect.value || savedOut;
     midiOutSelect.innerHTML = '<option value="">midi out: none</option>';
     for (const [id, port] of midiAccess.outputs) {
       const opt = document.createElement('option');
@@ -462,7 +544,7 @@
     midiOutPort = midiAccess.outputs.get(midiOutSelect.value) || null;
 
     // inputs
-    const prevIn = midiInSelect.value;
+    const prevIn = midiInSelect.value || savedIn;
     midiInSelect.innerHTML = '<option value="">midi in: none</option>';
     for (const [id, port] of midiAccess.inputs) {
       const opt = document.createElement('option');
@@ -495,11 +577,13 @@
 
   midiOutSelect.addEventListener('change', () => {
     midiOutPort = midiAccess ? midiAccess.outputs.get(midiOutSelect.value) || null : null;
+    try { localStorage.setItem('viii.midiOut', midiOutSelect.value); } catch {}
   });
 
   midiInSelect.addEventListener('change', () => {
     const port = midiAccess ? midiAccess.inputs.get(midiInSelect.value) || null : null;
     setMidiInput(port);
+    try { localStorage.setItem('viii.midiIn', midiInSelect.value); } catch {}
   });
 
   // ================================================================
@@ -516,6 +600,7 @@
   let fileFreeSpace = null;
   let firstBadgeFileNames = new Set();
   let openMenuFile = null;
+  let lastUploadedScript = null;
 
   async function refreshFileList() {
     if (!wasm) return;
@@ -786,13 +871,67 @@
     }
   }
 
-  uploadBtn.addEventListener('click', () => fileInput.click());
+  uploadBtn.addEventListener('click', () => openUploadPicker());
   refreshFilesBtn.addEventListener('click', () => refreshFileList());
+
+  function supportsFileSystemPicker() {
+    return typeof window?.showOpenFilePicker === 'function';
+  }
+
+  async function openUploadPicker() {
+    if (supportsFileSystemPicker()) {
+      try {
+        const handles = await window.showOpenFilePicker({
+          multiple: false,
+          types: [{ description: 'Lua scripts', accept: { 'text/plain': ['.lua'] } }]
+        });
+        const handle = handles?.[0];
+        if (!handle) return;
+        const file = await handle.getFile();
+        await uploadScript(file.name, await file.text(), handle);
+      } catch (e) {
+        if (e?.name !== 'AbortError') appendOutput('-- picker error: ' + e.message + '\n');
+      }
+      return;
+    }
+    fileInput.value = '';
+    fileInput.click();
+  }
+
+  async function refreshUploadAndRun() {
+    if (!lastUploadedScript) {
+      appendOutput('-- no previous upload. use u to pick a file first.\\n');
+      return;
+    }
+
+    let name = lastUploadedScript.name;
+    let text = lastUploadedScript.text;
+
+    // re-read from disk if we have a file handle
+    if (lastUploadedScript.fileHandle) {
+      try {
+        const file = await lastUploadedScript.fileHandle.getFile();
+        name = file.name;
+        text = await file.text();
+      } catch (e) {
+        appendOutput('-- refresh error: ' + e.message + '\\n');
+        return;
+      }
+    }
+
+    appendOutput('-- r: refreshing ' + name + '\\n');
+    sendReplLine('^^c');
+    await delay(200);
+    await uploadScript(name, text, lastUploadedScript.fileHandle);
+    sendReplLine('fs_run_file("lib.lua")');
+    await delay(100);
+    sendReplLine('fs_run_file(' + luaQuote(name) + ')');
+  }
 
   fileInput.addEventListener('change', async (e) => {
     const file = e.target.files[0];
     if (!file || !file.name.endsWith('.lua')) return;
-    await uploadScript(file.name, await file.text());
+    await uploadScript(file.name, await file.text(), null);
   });
 
   // drag and drop
@@ -804,7 +943,7 @@
     await uploadScript(file.name, await file.text());
   });
 
-  async function uploadScript(name, text) {
+  async function uploadScript(name, text, fileHandle) {
     appendOutput('-- uploading ' + name + '...\n');
 
     // delete existing file first
@@ -829,6 +968,8 @@
     await delay(100);
     sendReplLine('^^w');
     await delay(200);
+
+    lastUploadedScript = { name, text, fileHandle: fileHandle || null };
 
     await refreshFileList();
   }
