@@ -1,3 +1,3 @@
 [submodule "iii"]
 	path = iii
-	url = ssh://git@codeberg.org/tehn/iii.git
+	url = https://codeberg.org/tehn/iii.git
