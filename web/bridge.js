@@ -320,7 +320,7 @@
 
       gridWriter = gridPort.writable.getWriter();
       gridConnected = true;
-      gridBtn.textContent = 'disconnect grid';
+      gridBtn.textContent = 'disconnect';
       statusText.textContent = 'detecting grid...';
 
       // tell WASM the grid is connected
@@ -361,7 +361,7 @@
       console.warn('Grid disconnect:', e);
     }
 
-    gridBtn.textContent = 'connect grid';
+    gridBtn.textContent = 'connect';
     statusDot.classList.remove('connected');
     statusText.textContent = 'disconnected';
     appendOutput('-- grid disconnected\n');
@@ -832,23 +832,12 @@
   // ================================================================
 
   const restartBtn = document.getElementById('restartBtn');
-  const cleanBtn = document.getElementById('cleanBtn');
-  const clearBtn = document.getElementById('clearBtn');
   const reformatBtn = document.getElementById('reformatBtn');
 
   restartBtn.addEventListener('click', () => {
     appendOutput('> ^^i\n');
     sendReplLine('^^i');
     setTimeout(() => refreshFileList(), 500);
-  });
-
-  cleanBtn.addEventListener('click', () => {
-    appendOutput('> ^^c\n');
-    sendReplLine('^^c');
-  });
-
-  clearBtn.addEventListener('click', () => {
-    if (outputEl) outputEl.textContent = '';
   });
 
   reformatBtn.addEventListener('click', async () => {
@@ -870,6 +859,7 @@
     appendOutput('ERROR: Web Serial API not available.\n');
     appendOutput('Use Chrome, Edge, or Opera.\n');
     gridBtn.disabled = true;
+    uploadBtn.disabled = true;
   }
 
   initMidi();

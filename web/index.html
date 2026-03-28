@@ -10,7 +10,6 @@
   <header>
     <div class="header-left">
       <span class="logo">viii</span>
-      <button id="gridBtn" class="header-btn">connect grid</button>
       <span class="status-pill" id="statusPill">
         <span class="status-dot" id="statusDot"></span>
         <span class="status-text" id="statusText">not connected</span>
@@ -31,7 +30,6 @@
       <div class="pane-header">
         <span>files</span>
         <button id="refreshFilesBtn" class="small-btn" title="refresh file list">↻</button>
-        <button id="uploadBtn" class="small-btn" title="upload lua file">+</button>
       </div>
       <div id="fileList" class="file-list"></div>
       <div id="fileSpace" class="file-space">free: --</div>
@@ -41,16 +39,15 @@
     <div id="replPane" class="pane">
       <div id="output" class="output"></div>
       <div class="repl-toolbar">
-        <button id="restartBtn" class="toolbar-btn" title="restart (^^i)">restart</button>
-        <button id="cleanBtn" class="toolbar-btn" title="clean restart (^^c)">clean</button>
-        <button id="clearBtn" class="toolbar-btn" title="clear output">clear</button>
-        <div class="toolbar-spacer"></div>
-        <button id="reformatBtn" class="toolbar-btn toolbar-danger" title="reformat filesystem">reformat</button>
+        <button id="gridBtn" class="toolbar-btn">connect</button>
+        <button id="uploadBtn" class="toolbar-btn">upload</button>
+        <button id="restartBtn" class="toolbar-btn" title="restart (^^i)">reboot</button>
+        <button id="reformatBtn" class="toolbar-btn" title="reformat filesystem">reformat</button>
       </div>
       <div class="input-row">
         <span class="prompt">&gt;&gt;</span>
         <input type="text" id="replInput" class="repl-input"
-               placeholder="lua" autocomplete="off" spellcheck="false">
+               placeholder="send iii commands live here" autocomplete="off" spellcheck="false">
       </div>
     </div>
   </main>

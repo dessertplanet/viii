@@ -6,16 +6,16 @@
 
 :root {
   --bg: #111;
-  --fg: #ddd;
-  --dim: #555;
+  --fg: #e0e0e0;
+  --dim: #bbb;
   --accent: #fff;
   --pane-bg: #1a1a1a;
-  --border: #2a2a2a;
-  --btn-bg: #1e1e1e;
-  --btn-hover: #2a2a2a;
-  --btn-active: #333;
-  --danger: #c44;
-  --connected: #6c6;
+  --border: #444;
+  --btn-bg: #252525;
+  --btn-hover: #363636;
+  --btn-active: #444;
+  --danger: #e55;
+  --connected: #7d7;
   --font: 'SF Mono', 'Menlo', 'Consolas', monospace;
 }
 
@@ -54,26 +54,11 @@ header {
   letter-spacing: 0.5px;
 }
 
-.header-btn {
-  background: var(--btn-bg);
-  color: var(--fg);
-  border: 1px solid var(--border);
-  padding: 4px 10px;
-  font-family: var(--font);
-  font-size: 12px;
-  cursor: pointer;
-  border-radius: 3px;
-}
-
-.header-btn:hover {
-  background: var(--btn-hover);
-}
-
 .status-pill {
   display: flex;
   align-items: center;
   gap: 6px;
-  font-size: 12px;
+  font-size: 13px;
   color: var(--dim);
 }
 
@@ -101,9 +86,9 @@ select {
   border: 1px solid var(--border);
   padding: 4px 6px;
   font-family: var(--font);
-  font-size: 11px;
+  font-size: 13px;
   border-radius: 3px;
-  max-width: 160px;
+  max-width: 180px;
 }
 
 /* ---- main layout ---- */
@@ -142,7 +127,7 @@ main {
   gap: 4px;
   padding: 8px 10px;
   border-bottom: 1px solid var(--border);
-  font-size: 12px;
+  font-size: 13px;
   color: var(--dim);
 }
 
@@ -175,7 +160,7 @@ main {
 .file-list-empty {
   padding: 12px 10px;
   color: var(--dim);
-  font-size: 12px;
+  font-size: 13px;
 }
 
 /* ---- file row ---- */
@@ -186,7 +171,7 @@ main {
   align-items: center;
   padding: 0 4px 0 4px;
   min-height: 30px;
-  font-size: 12px;
+  font-size: 13px;
 }
 
 .file-row:hover {
@@ -198,7 +183,7 @@ main {
   border: none;
   color: var(--dim);
   cursor: pointer;
-  font-size: 10px;
+  font-size: 13px;
   padding: 4px 5px;
   font-family: var(--font);
   border-radius: 3px;
@@ -222,13 +207,13 @@ main {
 
 .file-size-label {
   color: var(--dim);
-  font-size: 11px;
+  font-size: 13px;
   flex-shrink: 0;
   padding-right: 2px;
 }
 
 .file-first-pill {
-  font-size: 9px;
+  font-size: 11px;
   color: var(--dim);
   border: 1px solid var(--border);
   border-radius: 3px;
@@ -282,7 +267,7 @@ main {
   border: none;
   color: var(--fg);
   font-family: var(--font);
-  font-size: 12px;
+  font-size: 13px;
   padding: 5px 12px;
   text-align: left;
   cursor: pointer;
@@ -305,7 +290,7 @@ main {
 .file-space {
   padding: 6px 10px;
   border-top: 1px solid var(--border);
-  font-size: 11px;
+  font-size: 13px;
   color: var(--dim);
 }
 
@@ -323,9 +308,9 @@ main {
   background: var(--btn-bg);
   color: var(--dim);
   border: 1px solid var(--border);
-  padding: 3px 8px;
+  padding: 4px 10px;
   font-family: var(--font);
-  font-size: 11px;
+  font-size: 13px;
   cursor: pointer;
   border-radius: 3px;
 }
@@ -333,20 +318,6 @@ main {
 .toolbar-btn:hover {
   color: var(--fg);
   background: var(--btn-hover);
-}
-
-.toolbar-danger {
-  color: var(--danger);
-  border-color: transparent;
-}
-
-.toolbar-danger:hover {
-  background: var(--danger);
-  color: var(--accent);
-}
-
-.toolbar-spacer {
-  flex: 1;
 }
 
 /* ---- repl ---- */
