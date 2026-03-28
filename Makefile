@@ -1,9 +1,8 @@
 # viii — virtual iii
 # Compiles the iii framework + Lua VM to WebAssembly via Emscripten
 
-III_DIR = ../iii-grid-one
-LUA_DIR = $(III_DIR)/lua
-III_SRC = $(III_DIR)/iii
+III_SRC = iii
+LUA_DIR = lua
 
 # --- Lua sources (matching iii-grid-one/lua/CMakeLists.txt) ---
 LUA_SOURCES = \

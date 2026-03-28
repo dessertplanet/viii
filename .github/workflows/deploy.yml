@@ -19,12 +19,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-
-      - name: Checkout iii-grid-one
-        uses: actions/checkout@v4
         with:
-          repository: monome/iii-grid-one
-          path: iii-grid-one
+          submodules: true
 
       - name: Setup Emscripten
         uses: mymindstorm/setup-emsdk@v14
@@ -32,7 +28,7 @@ jobs:
           version: latest
 
       - name: Build WASM
-        run: make III_DIR=iii-grid-one
+        run: make
 
       - name: Upload artifact
         uses: actions/upload-pages-artifact@v3

@@ -18,10 +18,15 @@
 #include "serial.h"
 #include "vm.h"
 
-/* flag set by watchdog_reboot shim */
+/* flag set by watchdog_reboot shim or iii_reset() */
 static bool reinit_requested = false;
 
 void viii_request_reinit(void) {
+  reinit_requested = true;
+}
+
+/* iii framework calls this to request a VM reinit */
+void iii_reset(void) {
   reinit_requested = true;
 }
 
