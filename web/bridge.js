@@ -334,7 +334,6 @@
   let gridConnected = false;
   let gridAutoReconnect = false;
   let gridAutoReconnectTimer = null;
-  let gridSelectedPortInfo = null;
   let isManualDisconnect = false;
 
   async function gridConnect(auto) {
@@ -348,10 +347,12 @@
         try {
           const ports = await navigator.serial.getPorts();
           const match = ports.find(p => {
-            const info = getPortInfo(p);
-            return info &&
-              info.usbVendorId === MONOME_VID &&
-              info.usbProductId === MONOME_PID;
+            try {
+              const info = p.getInfo();
+              return info &&
+                info.usbVendorId === MONOME_VID &&
+                info.usbProductId === MONOME_PID;
+            } catch { return false; }
           });
           if (match) gridPort = match;
         } catch { /* use existing gridPort */ }
@@ -375,7 +376,6 @@
       gridConnected = true;
       gridAutoReconnect = true;
       isManualDisconnect = false;
-      gridSelectedPortInfo = getPortInfo(gridPort);
       gridBtn.textContent = 'disconnect';
       statusText.textContent = 'detecting...';
 
@@ -458,10 +458,6 @@
     if (gridAutoReconnect && !isManualDisconnect) {
       scheduleGridReconnect();
     }
-  }
-
-  function getPortInfo(port) {
-    try { return port?.getInfo?.() || null; } catch { return null; }
   }
 
   function clearGridReconnectTimer() {

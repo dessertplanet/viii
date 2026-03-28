@@ -86,7 +86,7 @@ EXPORTED_FUNCTIONS = \
 	_malloc,\
 	_free
 
-EXPORTED_RUNTIME = ccall,cwrap,UTF8ToString,stringToUTF8,lengthBytesUTF8
+EXPORTED_RUNTIME = ccall,cwrap,UTF8ToString
 
 EMFLAGS = \
 	-s EXPORTED_FUNCTIONS='[$(EXPORTED_FUNCTIONS)]' \
