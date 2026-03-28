@@ -1,0 +1,51 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>viii — virtual iii</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <header>
+    <div class="header-left">
+      <span class="logo">viii</span>
+      <span class="status" id="status">not connected</span>
+    </div>
+    <div class="header-right">
+      <select id="midiOut" title="MIDI output">
+        <option value="">midi out: none</option>
+      </select>
+      <select id="midiIn" title="MIDI input">
+        <option value="">midi in: none</option>
+      </select>
+      <button id="gridBtn" class="header-btn">connect grid</button>
+    </div>
+  </header>
+
+  <main>
+    <div id="filePane" class="pane">
+      <div class="pane-header">
+        <span>files</span>
+        <button id="refreshFilesBtn" class="small-btn" title="refresh">↻</button>
+        <button id="uploadBtn" class="small-btn" title="upload">+</button>
+      </div>
+      <div id="fileList" class="file-list"></div>
+      <div id="fileSpace" class="file-space">free: --</div>
+      <input type="file" id="fileInput" accept=".lua" hidden>
+    </div>
+
+    <div id="replPane" class="pane">
+      <div id="output" class="output"></div>
+      <div class="input-row">
+        <span class="prompt">&gt;&gt;</span>
+        <input type="text" id="replInput" class="repl-input"
+               placeholder="lua" autocomplete="off" spellcheck="false">
+      </div>
+    </div>
+  </main>
+
+  <script src="viii.js"></script>
+  <script src="bridge.js"></script>
+</body>
+</html>
