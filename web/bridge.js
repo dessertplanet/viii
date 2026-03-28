@@ -129,8 +129,14 @@
     // start the main loop at ~250Hz via worker
     timerWorker.postMessage({ type: 'startLoop', intervalMs: 4 });
 
-    appendOutput('//// viii ready\n');
-    appendOutput('//// connect a monome grid to begin\n');
+    appendOutput('//// welcome to viii\n');
+    appendOutput('-- a virtual iii interface for devices that don\'t natively run iii.\n');
+    appendOutput('-- the lua vm runs here in the browser.\n');
+    appendOutput('-- hardware communication happens using the monome binary protocol.\n');
+    appendOutput('-- midi goes to host apps or connected instruments via webmidi.\n');
+    appendOutput('-- the filesystem persists in your browser.\n');
+    appendOutput('\n');
+    appendOutput('//// connect a grid or arc in monome/serialosc mode to begin.\n');
 
     // refresh file list after init
     setTimeout(() => refreshFileList(), 100);
@@ -260,8 +266,8 @@
   replInput.addEventListener('keydown', function (e) {
     if (e.key === 'Enter' && !e.shiftKey) {
       e.preventDefault();
-      const code = replInput.value;
-      if (!code.trim()) return;
+      const code = replInput.value.trim();
+      if (!code) return;
 
       appendOutput('>> ' + code + '\n');
       if (commandHistory.length === 0 ||
@@ -270,13 +276,17 @@
       }
       historyIndex = -1;
       replInput.value = '';
-      sendReplLine(code);
-    } else if (e.key === 'ArrowUp' && !e.shiftKey) {
+
+      // send each line separately (supports multi-line paste)
+      for (const line of code.split('\n')) {
+        sendReplLine(line);
+      }
+    } else if (e.key === 'ArrowUp' && !e.shiftKey && !replInput.value.includes('\n')) {
       e.preventDefault();
       if (commandHistory.length === 0) return;
       if (historyIndex < commandHistory.length - 1) historyIndex++;
       replInput.value = commandHistory[commandHistory.length - 1 - historyIndex];
-    } else if (e.key === 'ArrowDown' && !e.shiftKey) {
+    } else if (e.key === 'ArrowDown' && !e.shiftKey && !replInput.value.includes('\n')) {
       e.preventDefault();
       if (historyIndex <= 0) {
         historyIndex = -1;
