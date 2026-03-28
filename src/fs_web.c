@@ -106,7 +106,7 @@ static void ensure_capacity(struct fs_entry *e, uint32_t needed) {
  * ---------------------------------------------------------------- */
 
 void fs_init(void) {
-  memset(entries, 0, sizeof(entries));
+  /* don't clear entries — they may be preloaded from IndexedDB */
   memset(handles, 0, sizeof(handles));
 }
 
@@ -331,4 +331,17 @@ void viii_fs_preload(const char *name, const uint8_t *data, uint32_t len) {
   ensure_capacity(&entries[e], len);
   memcpy(entries[e].data, data, len);
   entries[e].size = len;
+}
+
+/* Clear in-memory FS without touching IndexedDB (for device swap) */
+EMSCRIPTEN_KEEPALIVE
+void viii_fs_clear(void) {
+  for (int i = 0; i < FS_MAX_FILES; i++) {
+    if (entries[i].used) {
+      free(entries[i].data);
+      entries[i].data = NULL;
+      entries[i].used = false;
+    }
+  }
+  memset(handles, 0, sizeof(handles));
 }

@@ -1015,6 +1015,11 @@
 
   const restartBtn = document.getElementById('restartBtn');
   const reformatBtn = document.getElementById('reformatBtn');
+  const clearBtn = document.getElementById('clearBtn');
+
+  clearBtn.addEventListener('click', () => {
+    if (outputEl) outputEl.textContent = '';
+  });
 
   restartBtn.addEventListener('click', () => {
     appendOutput('> ^^i\n');

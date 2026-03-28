@@ -335,6 +335,14 @@ main {
 
 /* ---- repl ---- */
 
+.output-container {
+  position: relative;
+  flex: 1;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+}
+
 .output {
   flex: 1;
   overflow-y: auto;
@@ -344,6 +352,26 @@ main {
   font-size: 13px;
   line-height: 1.5;
   color: var(--fg);
+}
+
+.output-clear-btn {
+  position: absolute;
+  right: 12px;
+  top: 12px;
+  z-index: 5;
+  background: var(--btn-bg);
+  color: var(--dim);
+  border: 1px solid var(--border);
+  padding: 3px 10px;
+  font-family: var(--font);
+  font-size: 13px;
+  cursor: pointer;
+  border-radius: 3px;
+}
+
+.output-clear-btn:hover {
+  color: var(--fg);
+  background: var(--btn-hover);
 }
 
 /* ---- repl input ---- */

@@ -82,6 +82,7 @@ EXPORTED_FUNCTIONS = \
 	_viii_midi_rx,\
 	_viii_metro_tick,\
 	_viii_fs_preload,\
+	_viii_fs_clear,\
 	_malloc,\
 	_free
 
