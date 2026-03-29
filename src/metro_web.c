@@ -1,12 +1,12 @@
 /*
  * metro_web.c — metro.h implementation for browser
  *
- * Uses JS setInterval for timing. Each metro tick sets a pending flag
+ * Uses an AudioWorklet for timing. Each metro tick sets a pending flag
  * that metro_task() checks on the main loop iteration. Since JS is
  * single-threaded, no locking is needed.
  *
- * Browser timer minimum is ~4ms. Intervals shorter than that will
- * be clamped with a console warning.
+ * Browser timer minimum is ~3ms (audio render callback).
+ * Intervals shorter than 4ms will be clamped with a console warning.
  */
 
 #include <stdbool.h>
