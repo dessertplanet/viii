@@ -26,10 +26,10 @@
  * JS bridge — send monome protocol bytes to WebSerial
  * ---------------------------------------------------------------- */
 
-EM_JS(void, js_grid_tx, (const uint8_t *data, uint32_t len), {
-  if (Module.onGridTx) {
+EM_JS(void, js_monome_tx, (const uint8_t *data, uint32_t len), {
+  if (Module.onMonomeTx) {
     var bytes = new Uint8Array(HEAPU8.buffer, data, len).slice();
-    Module.onGridTx(bytes);
+    Module.onMonomeTx(bytes);
   }
 });
 
@@ -93,19 +93,22 @@ static inline int clamp_val(int v, int lo, int hi) {
 }
 
 static void grid_send(const uint8_t *data, uint32_t len) {
-  js_grid_tx(data, len);
+  js_monome_tx(data, len);
 }
 
 static void grid_send_refresh(void) {
   if (!grid_connected) return;
 
-  uint8_t buf[35];
+  /* coalesce all packets into one USB transfer */
+  uint8_t txbuf[256];
+  uint32_t pos = 0;
+  uint8_t pkt[35];
 
-  /* send intensity */
-  uint32_t n = monome_encode_grid_led_intensity(buf, grid_intensity_val);
-  grid_send(buf, n);
+  /* intensity */
+  uint32_t n = monome_encode_grid_led_intensity(pkt, grid_intensity_val);
+  memcpy(txbuf + pos, pkt, n); pos += n;
 
-  /* send LED state as LEVEL_MAP quadrants */
+  /* LED state as LEVEL_MAP quadrants */
   for (uint8_t yo = 0; yo < grid_size_y_val; yo += 8) {
     for (uint8_t xo = 0; xo < grid_size_x_val; xo += 8) {
       uint8_t levels[64];
@@ -119,20 +122,28 @@ static void grid_send_refresh(void) {
             levels[r * 8 + c] = 0;
         }
       }
-      n = monome_encode_grid_led_level_map(buf, xo, yo, levels);
-      grid_send(buf, n);
+      n = monome_encode_grid_led_level_map(pkt, xo, yo, levels);
+      memcpy(txbuf + pos, pkt, n); pos += n;
     }
   }
+
+  js_monome_tx(txbuf, pos);
 }
 
 static void arc_send_refresh(void) {
   if (!grid_connected) return;
 
-  uint8_t buf[34];
+  /* coalesce all ring maps into one USB transfer */
+  uint8_t txbuf[136]; /* 4 × 34 bytes max */
+  uint32_t pos = 0;
+  uint8_t pkt[34];
+
   for (uint8_t n = 0; n < arc_enc_count; n++) {
-    uint32_t len = monome_encode_ring_map(buf, n, arc_ring[n]);
-    grid_send(buf, len);
+    uint32_t len = monome_encode_ring_map(pkt, n, arc_ring[n]);
+    memcpy(txbuf + pos, pkt, len); pos += len;
   }
+
+  js_monome_tx(txbuf, pos);
 }
 
 /* ----------------------------------------------------------------

@@ -21,16 +21,16 @@
  * ---------------------------------------------------------------- */
 
 EM_JS(void, js_metro_start, (int index, double interval_ms), {
-  if (Module._timerWorker) {
-    Module._timerWorker.postMessage({
+  if (Module._clockPort) {
+    Module._clockPort.postMessage({
       type: 'startMetro', index: index, intervalMs: interval_ms
     });
   }
 });
 
 EM_JS(void, js_metro_stop, (int index), {
-  if (Module._timerWorker) {
-    Module._timerWorker.postMessage({
+  if (Module._clockPort) {
+    Module._clockPort.postMessage({
       type: 'stopMetro', index: index
     });
   }

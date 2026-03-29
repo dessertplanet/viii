@@ -68,18 +68,15 @@
   // ================================================================
 
   let wasm = null;
-  let timerWorker = null;
+  let clockNode = null;
 
   async function initWasm() {
-    // create timer worker (not throttled in background tabs)
-    timerWorker = new Worker('timer-worker.js');
-
     wasm = await createVIII({
       // WASM → JS callbacks (set on Module before instantiation)
       onSerialTx: function (text) {
         handleSerialOutput(text);
       },
-      onGridTx: function (bytes) {
+      onMonomeTx: function (bytes) {
         gridSerialWrite(bytes);
       },
       onMidiTx: function (d1, d2, d3) {
@@ -108,26 +105,62 @@
     // initialize the iii VM
     wasm._viii_init();
 
-    // expose worker on Module so EM_JS in metro_web.c can find it
-    wasm._timerWorker = timerWorker;
+    // start AudioWorklet clock (sample-accurate timing)
+    let audioReady = false;
+    try {
+      const audioCtx = new AudioContext({ sampleRate: 44100 });
+      await audioCtx.audioWorklet.addModule('clock-processor.js');
+      clockNode = new AudioWorkletNode(audioCtx, 'clock-processor');
+      clockNode.connect(audioCtx.destination);
 
-    // route worker messages to WASM
-    timerWorker.onmessage = function (e) {
-      if (!wasm) return;
-      try {
-        if (e.data.type === 'loop') {
-          wasm._viii_loop();
-        } else if (e.data.type === 'metro') {
-          wasm._viii_metro_tick(e.data.index);
+      // expose clock port on Module so EM_JS in metro_web.c can use it
+      wasm._clockPort = clockNode.port;
+
+      // route clock messages to WASM
+      clockNode.port.onmessage = function (e) {
+        if (!wasm) return;
+        audioReady = true; // worklet is firing
+        try {
+          if (e.data.type === 'loop') {
+            wasm._viii_loop();
+          } else if (e.data.type === 'metro') {
+            wasm._viii_metro_tick(e.data.index);
+          }
+        } catch (err) {
+          console.error('clock callback error:', err);
+          appendOutput('\n-- error: ' + err.message + '\n');
         }
-      } catch (err) {
-        console.error('worker callback error:', err);
-        appendOutput('\n-- error: ' + err.message + '\n');
-      }
-    };
+      };
 
-    // start the main loop at ~250Hz via worker
-    timerWorker.postMessage({ type: 'startLoop', intervalMs: 4 });
+      // start main loop at ~250Hz via audio clock
+      clockNode.port.postMessage({ type: 'startLoop', intervalMs: 4 });
+
+      // try to resume AudioContext immediately
+      audioCtx.resume();
+
+      // resume on any user gesture; keep listening until running
+      const tryResume = () => {
+        if (audioCtx.state !== 'running') {
+          audioCtx.resume();
+        } else {
+          document.removeEventListener('click', tryResume, true);
+          document.removeEventListener('keydown', tryResume, true);
+        }
+      };
+      document.addEventListener('click', tryResume, true);
+      document.addEventListener('keydown', tryResume, true);
+    } catch (e) {
+      console.error('AudioWorklet init failed:', e);
+      appendOutput('-- clock init error: ' + e.message + '\n');
+    }
+
+    // bootstrap: run loop via setInterval until AudioWorklet takes over
+    const bootstrap = setInterval(() => {
+      if (audioReady) { clearInterval(bootstrap); return; }
+      try { wasm._viii_loop(); } catch (err) {
+        console.error('bootstrap loop error:', err);
+      }
+    }, 4);
 
     appendOutput('//// welcome to viii\n');
     appendOutput('-- a virtual iii interface for devices that don\'t natively run iii.\n');
