@@ -753,8 +753,7 @@
       // size
       const sizeEl = document.createElement('span');
       sizeEl.className = 'file-size-label';
-      const kb = entry.size / 1024;
-      sizeEl.textContent = kb >= 1 ? Math.round(kb) + 'kb' : entry.size + 'b';
+      sizeEl.textContent = Math.round(entry.size / 1024) + 'kb';
       row.appendChild(sizeEl);
 
       // kebab menu button
@@ -880,7 +879,7 @@
   async function configureFirst(name) {
     try {
       await executeLuaCapture('first(' + luaQuote(name) + ')');
-      appendOutput('-- ' + name + ' will run at startup\n');
+      appendOutput('-- ' + name + ' will run when this page is loaded\n');
       await refreshFileList();
     } catch (e) {
       appendOutput('-- first error: ' + e.message + '\n');

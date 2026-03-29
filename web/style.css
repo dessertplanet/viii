@@ -232,6 +232,7 @@ main {
   border-radius: 3px;
   padding: 1px 4px;
   margin-left: 4px;
+  margin-right: 6px;
   flex-shrink: 0;
 }
 
