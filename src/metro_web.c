@@ -25,6 +25,10 @@ EM_JS(void, js_metro_start, (int index, double interval_ms), {
     Module._clockPort.postMessage({
       type: 'startMetro', index: index, intervalMs: interval_ms
     });
+    // also start bootstrap metro in case AudioContext is suspended
+    if (Module._bootstrapMetroStart) {
+      Module._bootstrapMetroStart(index, interval_ms);
+    }
   }
 });
 
@@ -33,6 +37,9 @@ EM_JS(void, js_metro_stop, (int index), {
     Module._clockPort.postMessage({
       type: 'stopMetro', index: index
     });
+  }
+  if (Module._bootstrapMetroStop) {
+    Module._bootstrapMetroStop(index);
   }
 });
 

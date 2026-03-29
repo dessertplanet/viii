@@ -102,11 +102,32 @@
       console.warn('Could not load filesystem from IndexedDB:', e);
     }
 
-    // initialize the iii VM
-    wasm._viii_init();
-
-    // start AudioWorklet clock (sample-accurate timing)
+    // set up AudioWorklet clock BEFORE viii_init so metros started
+    // during lib.lua init (e.g. slew) have a clock to use
     let audioReady = false;
+    const bootstrapMetros = {};
+
+    // bootstrap metro start/stop — used when AudioContext is suspended
+    wasm._bootstrapMetroStart = function (index, intervalMs) {
+      if (bootstrapMetros[index]) clearInterval(bootstrapMetros[index]);
+      bootstrapMetros[index] = setInterval(() => {
+        if (audioReady) {
+          clearInterval(bootstrapMetros[index]);
+          delete bootstrapMetros[index];
+          return;
+        }
+        try { wasm._viii_metro_tick(index); } catch (err) {
+          console.error('bootstrap metro error:', err);
+        }
+      }, intervalMs);
+    };
+    wasm._bootstrapMetroStop = function (index) {
+      if (bootstrapMetros[index]) {
+        clearInterval(bootstrapMetros[index]);
+        delete bootstrapMetros[index];
+      }
+    };
+
     try {
       const audioCtx = new AudioContext({ sampleRate: 44100 });
       await audioCtx.audioWorklet.addModule('clock-processor.js');
@@ -119,7 +140,7 @@
       // route clock messages to WASM
       clockNode.port.onmessage = function (e) {
         if (!wasm) return;
-        audioReady = true; // worklet is firing
+        audioReady = true;
         try {
           if (e.data.type === 'loop') {
             wasm._viii_loop();
@@ -156,11 +177,21 @@
 
     // bootstrap: run loop via setInterval until AudioWorklet takes over
     const bootstrap = setInterval(() => {
-      if (audioReady) { clearInterval(bootstrap); return; }
+      if (audioReady) {
+        clearInterval(bootstrap);
+        for (const idx in bootstrapMetros) {
+          clearInterval(bootstrapMetros[idx]);
+          delete bootstrapMetros[idx];
+        }
+        return;
+      }
       try { wasm._viii_loop(); } catch (err) {
         console.error('bootstrap loop error:', err);
       }
     }, 4);
+
+    // NOW initialize the iii VM (lib.lua's slew.init will find the clock ready)
+    wasm._viii_init();
 
     appendOutput('//// welcome to viii\n');
     appendOutput('-- a virtual iii interface for devices that don\'t natively run iii.\n');
