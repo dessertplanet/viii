@@ -68,7 +68,7 @@
   // ================================================================
 
   let wasm = null;
-  let clockNode = null;
+  let timerWorker = null;
 
   async function initWasm() {
     wasm = await createVIII({
@@ -102,95 +102,32 @@
       console.warn('Could not load filesystem from IndexedDB:', e);
     }
 
-    // set up AudioWorklet clock BEFORE viii_init so metros started
-    // during lib.lua init (e.g. slew) have a clock to use
-    let audioReady = false;
-    const bootstrapMetros = {};
+    // create timer worker BEFORE viii_init so metros started
+    // during lib.lua init (e.g. slew) have a timer to use
+    timerWorker = new Worker('timer-worker.js');
 
-    // bootstrap metro start/stop — used when AudioContext is suspended
-    wasm._bootstrapMetroStart = function (index, intervalMs) {
-      if (bootstrapMetros[index]) clearInterval(bootstrapMetros[index]);
-      bootstrapMetros[index] = setInterval(() => {
-        if (audioReady) {
-          clearInterval(bootstrapMetros[index]);
-          delete bootstrapMetros[index];
-          return;
+    // expose worker on Module so EM_JS in metro_web.c can use it
+    wasm._timerWorker = timerWorker;
+
+    // route worker messages to WASM
+    timerWorker.onmessage = function (e) {
+      if (!wasm) return;
+      try {
+        if (e.data.type === 'loop') {
+          wasm._viii_loop();
+        } else if (e.data.type === 'metro') {
+          wasm._viii_metro_tick(e.data.index);
         }
-        try { wasm._viii_metro_tick(index); } catch (err) {
-          console.error('bootstrap metro error:', err);
-        }
-      }, intervalMs);
-    };
-    wasm._bootstrapMetroStop = function (index) {
-      if (bootstrapMetros[index]) {
-        clearInterval(bootstrapMetros[index]);
-        delete bootstrapMetros[index];
+      } catch (err) {
+        console.error('worker callback error:', err);
+        appendOutput('\n-- error: ' + err.message + '\n');
       }
     };
 
-    try {
-      const audioCtx = new AudioContext({ sampleRate: 44100 });
-      await audioCtx.audioWorklet.addModule('clock-processor.js');
-      clockNode = new AudioWorkletNode(audioCtx, 'clock-processor');
-      clockNode.connect(audioCtx.destination);
+    // start the main loop at ~250Hz
+    timerWorker.postMessage({ type: 'startLoop', intervalMs: 4 });
 
-      // expose clock port on Module so EM_JS in metro_web.c can use it
-      wasm._clockPort = clockNode.port;
-
-      // route clock messages to WASM
-      clockNode.port.onmessage = function (e) {
-        if (!wasm) return;
-        audioReady = true;
-        try {
-          if (e.data.type === 'loop') {
-            wasm._viii_loop();
-          } else if (e.data.type === 'metro') {
-            wasm._viii_metro_tick(e.data.index);
-          }
-        } catch (err) {
-          console.error('clock callback error:', err);
-          appendOutput('\n-- error: ' + err.message + '\n');
-        }
-      };
-
-      // start main loop at ~250Hz via audio clock
-      clockNode.port.postMessage({ type: 'startLoop', intervalMs: 4 });
-
-      // try to resume AudioContext immediately
-      audioCtx.resume();
-
-      // resume on any user gesture; keep listening until running
-      const tryResume = () => {
-        if (audioCtx.state !== 'running') {
-          audioCtx.resume();
-        } else {
-          document.removeEventListener('click', tryResume, true);
-          document.removeEventListener('keydown', tryResume, true);
-        }
-      };
-      document.addEventListener('click', tryResume, true);
-      document.addEventListener('keydown', tryResume, true);
-    } catch (e) {
-      console.error('AudioWorklet init failed:', e);
-      appendOutput('-- clock init error: ' + e.message + '\n');
-    }
-
-    // bootstrap: run loop via setInterval until AudioWorklet takes over
-    const bootstrap = setInterval(() => {
-      if (audioReady) {
-        clearInterval(bootstrap);
-        for (const idx in bootstrapMetros) {
-          clearInterval(bootstrapMetros[idx]);
-          delete bootstrapMetros[idx];
-        }
-        return;
-      }
-      try { wasm._viii_loop(); } catch (err) {
-        console.error('bootstrap loop error:', err);
-      }
-    }, 4);
-
-    // NOW initialize the iii VM (lib.lua's slew.init will find the clock ready)
+    // NOW initialize the iii VM (lib.lua's slew.init will find the worker ready)
     wasm._viii_init();
 
     appendOutput('//// welcome to viii\n');

@@ -1,12 +1,13 @@
 /*
  * metro_web.c — metro.h implementation for browser
  *
- * Uses an AudioWorklet for timing. Each metro tick sets a pending flag
- * that metro_task() checks on the main loop iteration. Since JS is
- * single-threaded, no locking is needed.
+ * Uses a Web Worker for timing (not throttled in background tabs).
+ * Each metro tick sets a pending flag that metro_task() checks on
+ * the main loop iteration. Since JS is single-threaded on the main
+ * thread, no locking is needed.
  *
- * Browser timer minimum is ~3ms (audio render callback).
- * Intervals shorter than 4ms will be clamped with a console warning.
+ * Browser timer minimum is ~4ms. Intervals shorter than that will
+ * be clamped with a console warning.
  */
 
 #include <stdbool.h>
@@ -21,25 +22,18 @@
  * ---------------------------------------------------------------- */
 
 EM_JS(void, js_metro_start, (int index, double interval_ms), {
-  if (Module._clockPort) {
-    Module._clockPort.postMessage({
+  if (Module._timerWorker) {
+    Module._timerWorker.postMessage({
       type: 'startMetro', index: index, intervalMs: interval_ms
     });
-    // also start bootstrap metro in case AudioContext is suspended
-    if (Module._bootstrapMetroStart) {
-      Module._bootstrapMetroStart(index, interval_ms);
-    }
   }
 });
 
 EM_JS(void, js_metro_stop, (int index), {
-  if (Module._clockPort) {
-    Module._clockPort.postMessage({
+  if (Module._timerWorker) {
+    Module._timerWorker.postMessage({
       type: 'stopMetro', index: index
     });
-  }
-  if (Module._bootstrapMetroStop) {
-    Module._bootstrapMetroStop(index);
   }
 });
 
