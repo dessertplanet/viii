@@ -323,8 +323,6 @@
   // WebSerial — grid connection (binary monome protocol)
   // ================================================================
 
-  const MONOME_VID = 0xCAFE;
-  const MONOME_PID = 0x1110; // monome mode
   const gridBtn = document.getElementById('gridBtn');
   const statusDot = document.getElementById('statusDot');
   const statusText = document.getElementById('statusText');
@@ -340,22 +338,12 @@
   async function gridConnect(auto) {
     try {
       if (!auto) {
-        gridPort = await navigator.serial.requestPort({
-          filters: [{ usbVendorId: MONOME_VID, usbProductId: MONOME_PID }]
-        });
+        gridPort = await navigator.serial.requestPort();
       } else if (gridPort) {
         // try to find the same port again via getPorts()
         try {
           const ports = await navigator.serial.getPorts();
-          const match = ports.find(p => {
-            try {
-              const info = p.getInfo();
-              return info &&
-                info.usbVendorId === MONOME_VID &&
-                info.usbProductId === MONOME_PID;
-            } catch { return false; }
-          });
-          if (match) gridPort = match;
+          if (ports.length) gridPort = ports[0];
         } catch { /* use existing gridPort */ }
       }
 
