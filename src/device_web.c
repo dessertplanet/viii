@@ -228,7 +228,19 @@ int monome_platform_close(monome_t *monome) {
 ssize_t monome_platform_write(monome_t *monome, const uint8_t *buf, size_t nbyte) {
   (void)monome;
   if (!grid_connected || !buf || nbyte == 0) return 0;
-  js_monome_tx(buf, (uint32_t)nbyte);
+
+  /* Pad each write to 64 bytes (USB full-speed bulk packet size) so that
+   * no mext message ever straddles a USB packet boundary. Padding uses
+   * 0xFF which hits the firmware's default: break in processSerial(). */
+  if (nbyte < 64) {
+    uint8_t padded[64];
+    memcpy(padded, buf, nbyte);
+    memset(padded + nbyte, 0xFF, 64 - nbyte);
+    js_monome_tx(padded, 64);
+  } else {
+    js_monome_tx(buf, (uint32_t)nbyte);
+  }
+
   return (ssize_t)nbyte;
 }
 

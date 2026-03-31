@@ -524,11 +524,34 @@
     }
   }
 
+  let txPending = null;
+  let txScheduled = false;
+
   function gridSerialWrite(bytes) {
     if (!gridWriter || !gridConnected) return;
-    gridWriter.write(bytes).catch(e => {
-      console.error('Grid write error:', e);
-    });
+
+    if (!txPending) {
+      txPending = new Uint8Array(bytes);
+    } else {
+      const merged = new Uint8Array(txPending.length + bytes.length);
+      merged.set(txPending);
+      merged.set(bytes, txPending.length);
+      txPending = merged;
+    }
+
+    if (!txScheduled) {
+      txScheduled = true;
+      queueMicrotask(() => {
+        txScheduled = false;
+        const buf = txPending;
+        txPending = null;
+        if (buf && gridWriter && gridConnected) {
+          gridWriter.write(buf).catch(e => {
+            console.error('Grid write error:', e);
+          });
+        }
+      });
+    }
   }
 
   gridBtn.addEventListener('click', () => {
