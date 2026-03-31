@@ -3,7 +3,7 @@
 
 III_SRC = iii
 LUA_DIR = lua
-LIBMONOME_DIR = third-party/libmonome
+LIBMONOME_DIR = libmonome
 
 # --- Lua sources (matching iii-grid-one/lua/CMakeLists.txt) ---
 LUA_SOURCES = \
