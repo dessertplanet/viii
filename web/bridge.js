@@ -328,12 +328,47 @@
   const statusText = document.getElementById('statusText');
 
   let gridPort = null;
+  let gridPortInfo = null;
   let gridReader = null;
   let gridWriter = null;
   let gridConnected = false;
   let gridAutoReconnect = false;
   let gridAutoReconnectTimer = null;
   let isManualDisconnect = false;
+  let detectedArc = false;
+
+  function formatProductId(info) {
+    if (!info || info.usbProductId === undefined) return null;
+    return 'pid 0x' + Number(info.usbProductId).toString(16).padStart(4, '0');
+  }
+
+  function currentDeviceLabel() {
+    const productId = formatProductId(gridPortInfo);
+    const sx = wasm ? wasm._viii_grid_size_x() : 0;
+    const sy = wasm ? wasm._viii_grid_size_y() : 0;
+
+    let base;
+    if (!gridConnected) {
+      base = 'disconnected';
+    } else if (detectedArc) {
+      base = 'arc';
+    } else if (sx > 0 && sy > 0) {
+      base = 'grid ' + sx + '×' + sy;
+    } else {
+      base = 'detecting...';
+    }
+
+    return productId ? (base + ' • ' + productId) : base;
+  }
+
+  function syncDetectedDevice() {
+    if (wasm) {
+      wasm._viii_set_arc_mode(detectedArc ? 1 : 0);
+    }
+    if (gridConnected) {
+      statusText.textContent = currentDeviceLabel();
+    }
+  }
 
   async function gridConnect(auto) {
     try {
@@ -352,6 +387,12 @@
         return;
       }
 
+      try {
+        gridPortInfo = gridPort.getInfo ? gridPort.getInfo() : null;
+      } catch {
+        gridPortInfo = null;
+      }
+
       await gridPort.open({
         baudRate: 115200,
         dataBits: 8,
@@ -365,8 +406,10 @@
       gridConnected = true;
       gridAutoReconnect = true;
       isManualDisconnect = false;
+      detectedArc = false;
       gridBtn.textContent = 'disconnect';
-      statusText.textContent = 'detecting...';
+      statusText.textContent = currentDeviceLabel();
+      syncDetectedDevice();
 
       // tell WASM the grid is connected (sends queries)
       wasm._viii_grid_connect();
@@ -381,27 +424,30 @@
         }, 300);
       }
 
-      // poll for capability response
+      // poll for discovery results
       let attempts = 0;
       const sizeCheck = setInterval(() => {
         attempts++;
         const sx = wasm._viii_grid_size_x();
         const sy = wasm._viii_grid_size_y();
-        const enc = wasm._viii_arc_enc_count();
-        const isArc = enc > 0;
-        const isGrid = !isArc && sx > 0 && sy > 0;
-        const detected = isArc || isGrid;
-        if (detected || attempts >= 30) {
+        if (sx > 0 && sy > 0) {
+          detectedArc = false;
+          syncDetectedDevice();
           clearInterval(sizeCheck);
           statusDot.classList.add('connected');
-          let label;
-          if (isArc) {
-            label = 'arc ' + enc;
-          } else if (isGrid) {
-            label = 'grid ' + sx + '×' + sy;
-          } else {
-            label = 'connected';
-          }
+          const label = currentDeviceLabel();
+          statusText.textContent = label;
+          const verb = auto ? 'reconnected' : 'connected';
+          appendOutput('-- ' + label + ' ' + verb + '\n');
+          return;
+        }
+
+        if (attempts >= 30) {
+          detectedArc = true;
+          syncDetectedDevice();
+          clearInterval(sizeCheck);
+          statusDot.classList.add('connected');
+          const label = currentDeviceLabel();
           statusText.textContent = label;
           const verb = auto ? 'reconnected' : 'connected';
           appendOutput('-- ' + label + ' ' + verb + '\n');
@@ -438,6 +484,8 @@
 
     // clear port on manual disconnect so next connect prompts picker
     if (manual) gridPort = null;
+    if (manual) gridPortInfo = null;
+    detectedArc = false;
 
     gridBtn.textContent = 'connect';
     statusDot.classList.remove('connected');
