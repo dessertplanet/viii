@@ -62,6 +62,7 @@ static uint8_t arc_intensity_val = 15;
 static uint16_t arc_res_val[MAX_ENCODERS]; /* ticks per delta (1 = raw) */
 static int32_t arc_accum[MAX_ENCODERS];    /* accumulator for resolution */
 static bool arc_refresh_pending = false;
+static bool arc_intensity_pending = false;
 static bool device_is_arc = false;
 
 /* key event queue */
@@ -304,6 +305,11 @@ static void grid_send_refresh(void) {
 
 static void arc_send_refresh(void) {
   if (!grid_connected || !grid_monome) return;
+
+  if (arc_intensity_pending) {
+    monome_led_ring_intensity(grid_monome, arc_intensity_val);
+    arc_intensity_pending = false;
+  }
 
   uint8_t ring_count = arc_enc_count;
   if (device_is_arc && ring_count == 0) ring_count = MAX_ENCODERS;
@@ -587,6 +593,7 @@ static int l_arc_intensity(lua_State *l) {
   uint8_t b = (uint8_t)lua_tointeger(l, 1);
   if (b > 15) b = 15;
   arc_intensity_val = b;
+  arc_intensity_pending = true;
   arc_refresh_pending = true;
   return 0;
 }
@@ -692,6 +699,7 @@ void device_init(void) {
   grid_refresh_pending = false;
   arc_refresh_pending = false;
   grid_intensity_pending = false;
+  arc_intensity_pending = false;
   for (int q = 0; q < 4; q++) grid_dirty[q] = false;
   device_is_arc = false;
   monome_rx_r = 0;
