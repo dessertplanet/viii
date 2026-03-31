@@ -50,6 +50,7 @@ static uint8_t grid_intensity_val = 15;
 static bool grid_intensity_pending = false;
 static bool grid_refresh_pending = false;
 static bool grid_connected = false;
+static bool grid_dirty[4] = {false, false, false, false};
 
 /* ---- arc state ---- */
 #define MAX_ENCODERS 4
@@ -107,6 +108,10 @@ static uint8_t arc_query_expected = 0;
 
 static inline int clamp_val(int v, int lo, int hi) {
   return v < lo ? lo : (v > hi ? hi : v);
+}
+
+static inline uint8_t grid_quad_idx(uint8_t x, uint8_t y) {
+  return ((y >= 8) << 1) | (x >= 8);
 }
 
 static inline uint32_t monome_rx_available(void) {
@@ -277,6 +282,9 @@ static void grid_send_refresh(void) {
 
   for (uint8_t yo = 0; yo < grid_size_y_val; yo += 8) {
     for (uint8_t xo = 0; xo < grid_size_x_val; xo += 8) {
+      uint8_t q = grid_quad_idx(xo, yo);
+      if (!grid_dirty[q]) continue;
+
       uint8_t levels[64];
       for (uint8_t r = 0; r < 8; r++) {
         for (uint8_t c = 0; c < 8; c++) {
@@ -289,6 +297,7 @@ static void grid_send_refresh(void) {
         }
       }
       monome_led_level_map(grid_monome, xo, yo, levels);
+      grid_dirty[q] = false;
     }
   }
 }
@@ -450,6 +459,7 @@ static int l_grid_led(lua_State *l) {
   else z = (int8_t)clamp_val(z, 0, 15);
 
   grid_led[idx] = (uint8_t)z;
+  grid_dirty[grid_quad_idx(x, y)] = true;
   return 0;
 }
 
@@ -482,6 +492,7 @@ static int l_grid_led_all(lua_State *l) {
       }
     }
   }
+  for (int q = 0; q < 4; q++) grid_dirty[q] = true;
   return 0;
 }
 
@@ -681,6 +692,7 @@ void device_init(void) {
   grid_refresh_pending = false;
   arc_refresh_pending = false;
   grid_intensity_pending = false;
+  for (int q = 0; q < 4; q++) grid_dirty[q] = false;
   device_is_arc = false;
   monome_rx_r = 0;
   monome_rx_w = 0;
@@ -776,6 +788,7 @@ void viii_grid_connect(void) {
   memset(grid_led, 0, sizeof(grid_led));
   memset(arc_ring, 0, sizeof(arc_ring));
   for (int i = 0; i < MAX_ENCODERS; i++) { arc_res_val[i] = 1; arc_accum[i] = 0; }
+  for (int q = 0; q < 4; q++) grid_dirty[q] = false;
 
   {
     const uint8_t query_capabilities[] = {0x00};
