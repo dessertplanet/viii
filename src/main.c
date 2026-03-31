@@ -57,6 +57,12 @@ EMSCRIPTEN_KEEPALIVE
 void viii_loop(void) {
   if (reinit_requested) {
     reinit_requested = false;
+
+    /* send MIDI All Notes Off (CC 123) on all 16 channels to prevent hung notes */
+    for (uint8_t ch = 0; ch < 16; ch++) {
+      midi_tx(0xB0 | ch, 123, 0);
+    }
+
     vm_deinit();
     vm_init(true);
     repl_init();

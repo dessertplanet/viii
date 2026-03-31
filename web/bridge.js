@@ -589,7 +589,12 @@
     try {
       midiAccess = await navigator.requestMIDIAccess({ sysex: false });
       refreshMidiPorts();
-      midiAccess.onstatechange = () => refreshMidiPorts();
+      midiAccess.onstatechange = (e) => {
+        if (e.port === midiOutPort && e.port.state === 'disconnected') {
+          midiPanic();
+        }
+        refreshMidiPorts();
+      };
     } catch (e) {
       console.warn('WebMIDI not available:', e);
     }
@@ -640,12 +645,20 @@
     }
   }
 
+  function midiPanic() {
+    if (!midiOutPort) return;
+    for (let ch = 0; ch < 16; ch++) {
+      midiOutPort.send([0xB0 | ch, 123, 0]);
+    }
+  }
+
   function midiSend(d1, d2, d3) {
     if (!midiOutPort) return;
     midiOutPort.send([d1, d2, d3]);
   }
 
   midiOutSelect.addEventListener('change', () => {
+    midiPanic();
     midiOutPort = midiAccess ? midiAccess.outputs.get(midiOutSelect.value) || null : null;
     try { localStorage.setItem('viii.midiOut', midiOutSelect.value); } catch {}
   });
