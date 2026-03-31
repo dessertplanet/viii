@@ -97,11 +97,11 @@ static uint8_t monome_rx_buf[MONOME_RX_BUFSIZE];
 static uint32_t monome_rx_w = 0;
 static uint32_t monome_rx_r = 0;
 
-/* narrow parser for lazy arc encoder-count queries */
-static bool arc_query_pending = false;
-static uint8_t arc_query_buf[64];
-static uint8_t arc_query_len = 0;
-static uint8_t arc_query_expected = 0;
+/* lightweight mext system-message sniffer for discovery responses
+ * (grid size + encoder count) that libmonome parses but doesn't expose */
+static uint8_t sniffer_buf[64];
+static uint8_t sniffer_len = 0;
+static uint8_t sniffer_expected = 0;
 
 /* ----------------------------------------------------------------
  * Helpers
@@ -119,23 +119,22 @@ static inline uint32_t monome_rx_available(void) {
   return monome_rx_w - monome_rx_r;
 }
 
-static uint8_t mext_msg_total_len(uint8_t header) {
+/* mext device→host response lengths (header byte → total message length) */
+static uint8_t mext_response_len(uint8_t header) {
   uint8_t addr = header >> 4;
   uint8_t cmd = header & 0x0F;
-
   switch (addr) {
     case 0x0: /* system */
       switch (cmd) {
-        case 0x0: return 3;  /* query response */
+        case 0x0: return 3;  /* query response: header + subsystem + count */
         case 0x1: return 33; /* id */
         case 0x2: return 4;  /* grid offset */
-        case 0x3: return 3;  /* grid size */
+        case 0x3: return 3;  /* grid size: header + cols + rows */
         case 0x4: return 3;  /* addr */
         case 0xF: return 9;  /* version */
         default: return 1;
       }
-    case 0x2: /* key grid */
-      return (cmd <= 0x1) ? 3 : 1;
+    case 0x2: return (cmd <= 0x1) ? 3 : 1; /* key grid */
     case 0x5: /* encoder */
       if (cmd == 0x0) return 3;
       if (cmd == 0x1 || cmd == 0x2) return 2;
@@ -144,45 +143,53 @@ static uint8_t mext_msg_total_len(uint8_t header) {
       if (cmd == 0x0) return 2;
       if (cmd == 0x1) return 8;
       return 1;
-    default:
-      return 1;
+    default: return 1;
   }
 }
 
-static void arc_query_consume_byte(uint8_t byte) {
-  if (!arc_query_pending) return;
-
-  if (arc_query_expected == 0) {
-    arc_query_buf[0] = byte;
-    arc_query_len = 1;
-    arc_query_expected = mext_msg_total_len(byte);
-    if (arc_query_expected <= 1) {
-      arc_query_expected = 0;
-      arc_query_len = 0;
+/* sniff mext system responses for grid size + encoder count */
+static void sniffer_consume_byte(uint8_t byte) {
+  if (sniffer_expected == 0) {
+    /* new message header */
+    sniffer_buf[0] = byte;
+    sniffer_len = 1;
+    sniffer_expected = mext_response_len(byte);
+    if (sniffer_expected <= 1) {
+      sniffer_expected = 0;
+      sniffer_len = 0;
     }
     return;
   }
 
-  if (arc_query_len < sizeof(arc_query_buf)) {
-    arc_query_buf[arc_query_len++] = byte;
+  if (sniffer_len < sizeof(sniffer_buf)) {
+    sniffer_buf[sniffer_len++] = byte;
   }
 
-  if (arc_query_len == arc_query_expected) {
-    uint8_t header = arc_query_buf[0];
+  if (sniffer_len >= sniffer_expected) {
+    uint8_t header = sniffer_buf[0];
     uint8_t addr = header >> 4;
     uint8_t cmd = header & 0x0F;
 
-    if (addr == 0x0 && cmd == 0x0 && arc_query_expected == 3) {
-      uint8_t subsystem = arc_query_buf[1];
-      uint8_t count = arc_query_buf[2];
-      if (subsystem == 0x5) {
-        arc_enc_count = count > MAX_ENCODERS ? MAX_ENCODERS : count;
-        arc_query_pending = false;
+    if (addr == 0x0) {
+      if (cmd == 0x3 && sniffer_expected == 3) {
+        /* grid size response: [0x03, cols, rows] */
+        uint8_t cols = sniffer_buf[1];
+        uint8_t rows = sniffer_buf[2];
+        if (cols > 0 && cols <= MAX_GRID_X) grid_size_x_val = cols;
+        if (rows > 0 && rows <= MAX_GRID_Y) grid_size_y_val = rows;
+      } else if (cmd == 0x0 && sniffer_expected == 3) {
+        /* query response: [0x00, subsystem, count] */
+        uint8_t subsystem = sniffer_buf[1];
+        uint8_t count = sniffer_buf[2];
+        if (subsystem == 0x5) { /* encoder subsystem */
+          arc_enc_count = count > MAX_ENCODERS ? MAX_ENCODERS : count;
+          if (arc_enc_count > 0) device_is_arc = true;
+        }
       }
     }
 
-    arc_query_expected = 0;
-    arc_query_len = 0;
+    sniffer_expected = 0;
+    sniffer_len = 0;
   }
 }
 
@@ -615,13 +622,6 @@ static int l_arc_refresh(lua_State *l) {
 }
 
 static int l_arc_enc_count(lua_State *l) {
-  if (grid_connected) {
-    const uint8_t query_capabilities[] = {0x00};
-    arc_query_pending = true;
-    arc_query_expected = 0;
-    arc_query_len = 0;
-    grid_send(query_capabilities, sizeof(query_capabilities));
-  }
   lua_pushinteger(l, arc_enc_count);
   return 1;
 }
@@ -704,9 +704,8 @@ void device_init(void) {
   device_is_arc = false;
   monome_rx_r = 0;
   monome_rx_w = 0;
-  arc_query_pending = false;
-  arc_query_expected = 0;
-  arc_query_len = 0;
+  sniffer_len = 0;
+  sniffer_expected = 0;
 }
 
 void device_task(void) {
@@ -753,9 +752,8 @@ void viii_grid_rx(const uint8_t *data, uint32_t len) {
   if (len > (MONOME_RX_BUFSIZE - monome_rx_w)) {
     monome_rx_r = 0;
     monome_rx_w = 0;
-    arc_query_pending = false;
-    arc_query_expected = 0;
-    arc_query_len = 0;
+    sniffer_len = 0;
+    sniffer_expected = 0;
     return;
   }
 
@@ -763,7 +761,7 @@ void viii_grid_rx(const uint8_t *data, uint32_t len) {
   monome_rx_w += len;
 
   for (uint32_t i = 0; i < len; i++) {
-    arc_query_consume_byte(data[i]);
+    sniffer_consume_byte(data[i]);
   }
 
   while (monome_event_handle_next(grid_monome) > 0) {
@@ -788,9 +786,8 @@ void viii_grid_connect(void) {
   device_is_arc = false;
   monome_rx_r = 0;
   monome_rx_w = 0;
-  arc_query_pending = false;
-  arc_query_expected = 0;
-  arc_query_len = 0;
+  sniffer_len = 0;
+  sniffer_expected = 0;
 
   /* clear LED state */
   memset(grid_led, 0, sizeof(grid_led));
@@ -798,14 +795,17 @@ void viii_grid_connect(void) {
   for (int i = 0; i < MAX_ENCODERS; i++) { arc_res_val[i] = 1; arc_accum[i] = 0; }
   for (int q = 0; q < 4; q++) grid_dirty[q] = false;
 
+  /* send discovery queries (raw mext bytes) */
   {
     const uint8_t query_capabilities[] = {0x00};
     const uint8_t query_id[] = {0x01};
     const uint8_t query_size[] = {0x05};
+    const uint8_t query_enc_count[] = {0x09};
 
     grid_send(query_capabilities, sizeof(query_capabilities));
     grid_send(query_id, sizeof(query_id));
     grid_send(query_size, sizeof(query_size));
+    grid_send(query_enc_count, sizeof(query_enc_count));
   }
 
   if (grid_monome) {
@@ -823,9 +823,6 @@ void viii_set_arc_mode(uint8_t is_arc) {
   device_is_arc = is_arc != 0;
   if (!device_is_arc) {
     arc_enc_count = 0;
-    arc_query_pending = false;
-    arc_query_expected = 0;
-    arc_query_len = 0;
   }
 }
 
