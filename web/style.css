@@ -225,17 +225,6 @@ main {
   padding-right: 2px;
 }
 
-.file-first-pill {
-  font-size: 11px;
-  color: var(--dim);
-  border: 1px solid var(--border);
-  border-radius: 3px;
-  padding: 1px 4px;
-  margin-left: 4px;
-  margin-right: 6px;
-  flex-shrink: 0;
-}
-
 .file-menu-btn {
   background: none;
   border: none;

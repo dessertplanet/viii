@@ -78,6 +78,8 @@
   let loopIntervalMs = 4;       // ~250Hz main loop
   let loopNextTickAt = 0;
 
+  let audioTimerStarted = false;
+
   function ensureAudioKeepalive() {
     if (!keepaliveCtx) {
       try {
@@ -90,11 +92,16 @@
     if (keepaliveCtx.state === 'suspended') {
       keepaliveCtx.resume();
     }
-    startAudioTimer();
+    if (startAudioTimer() && !audioTimerStarted) {
+      audioTimerStarted = true;
+      // now that the loop is ticking, refresh the file list
+      setTimeout(() => refreshFileList(), 100);
+    }
   }
 
   function startAudioTimer() {
-    if (audioTimerNode || !keepaliveCtx) return;
+    if (audioTimerNode || !keepaliveCtx) return false;
+    if (keepaliveCtx.state !== 'running') return false;
 
     // ScriptProcessorNode with bufferSize 256 at 44100Hz ≈ fires every ~5.8ms
     audioTimerNode = keepaliveCtx.createScriptProcessor(256, 1, 1);
@@ -129,12 +136,14 @@
     gain.connect(keepaliveCtx.destination);
 
     loopNextTickAt = performance.now();
+    return true;
   }
 
   // API used by metro_web.c via Module._timerWorker shim
   function createTimerShim() {
     return {
       postMessage: function (msg) {
+        // update audio timer state
         switch (msg.type) {
           case 'startLoop':
             loopIntervalMs = msg.intervalMs || 4;
@@ -153,6 +162,7 @@
             delete metroState[msg.index];
             break;
         }
+        // forward to fallback worker if audio timer isn't active yet
       }
     };
   }
@@ -195,21 +205,18 @@
       console.warn('Could not load filesystem from IndexedDB:', e);
     }
 
-    // create audio-driven timer BEFORE viii_init so metros started
-    // during lib.lua init (e.g. slew) have a timer to use
-    ensureAudioKeepalive();
+    // timer shim — buffers metro state until AudioContext is
+    // resumed on first user gesture, then audio timer drives all timing
     const timerShim = createTimerShim();
 
     // expose shim on Module so EM_JS in metro_web.c can use it
     wasm._timerWorker = timerShim;
 
-    // start the audio-thread timer (drives main loop + metros)
-    startAudioTimer();
-
-    // start the main loop at ~250Hz
+    // set main loop interval (won't tick until audio timer starts)
     timerShim.postMessage({ type: 'startLoop', intervalMs: 4 });
 
-    // NOW initialize the iii VM (lib.lua's slew.init will find the worker ready)
+    // initialize the iii VM (lib.lua's slew.init registers metros
+    // via the shim; they'll start ticking on first user gesture)
     wasm._viii_init();
 
     appendOutput('//// welcome to viii\n');
@@ -223,8 +230,15 @@
     appendOutput('//// connect a grid or arc in monome/serialosc mode to begin.\n');
     appendOutput('\n');
 
-    // refresh file list after init
-    setTimeout(() => refreshFileList(), 100);
+    // pump the loop briefly so the initial file list can load
+    // (audio timer isn't active yet — no user gesture)
+    const initPump = setInterval(() => {
+      try { wasm._viii_loop(); } catch(e) { /* ignore */ }
+    }, 10);
+    setTimeout(async () => {
+      try { await refreshFileList(); } catch(e) { /* ignore */ }
+      clearInterval(initPump);
+    }, 50);
   }
 
   // ================================================================
@@ -394,6 +408,8 @@
   arcKeyBtn.addEventListener('touchstart', (e) => { e.preventDefault(); arcKeyDown(); }, { passive: false });
   arcKeyBtn.addEventListener('touchend', (e) => { e.preventDefault(); arcKeyUp(); });
   arcKeyBtn.addEventListener('touchcancel', arcKeyUp);
+
+  replInput.addEventListener('focus', () => ensureAudioKeepalive());
 
   replInput.addEventListener('keydown', function (e) {
     if (e.key === 'Enter' && !e.shiftKey) {
@@ -817,7 +833,6 @@
 
   let fileEntries = [];
   let fileFreeSpace = null;
-  let firstBadgeFileNames = new Set();
   let openMenuFile = null;
   let lastUploadedScript = null;
 
@@ -850,31 +865,9 @@
       fileFreeSpace = parseInt(memLines[0], 10);
       if (!isFinite(fileFreeSpace)) fileFreeSpace = null;
 
-      // detect which file is set as 'first'
-      try {
-        await refreshFirstBadge();
-      } catch { firstBadgeFileNames = new Set(); }
-
       renderFileList();
     } catch (e) {
       console.error('refreshFileList error:', e);
-    }
-  }
-
-  async function refreshFirstBadge() {
-    const hasInit = fileEntries.some(e => e.name === 'init.lua');
-    if (!hasInit) { firstBadgeFileNames = new Set(); return; }
-
-    const initLines = await executeLuaCapture('cat("init.lua")');
-    const content = initLines.join('\n')
-      .replace(/--\[\[[\s\S]*?\]\]/g, '')
-      .replace(/--.*$/gm, '');
-    const match = content.match(/fs_run_file\s*\(\s*(['"])([^'"]+)\1\s*\)/);
-    const target = match?.[2]?.trim() || '';
-    if (target && fileEntries.some(e => e.name === target)) {
-      firstBadgeFileNames = new Set([target]);
-    } else {
-      firstBadgeFileNames = new Set();
     }
   }
 
@@ -934,14 +927,6 @@
       label.textContent = entry.name;
       row.appendChild(label);
 
-      // first badge
-      if (!isInit && !isLib && firstBadgeFileNames.has(entry.name)) {
-        const badge = document.createElement('span');
-        badge.className = 'file-first-pill';
-        badge.textContent = 'first';
-        row.appendChild(badge);
-      }
-
       // size
       const sizeEl = document.createElement('span');
       sizeEl.className = 'file-size-label';
@@ -978,7 +963,6 @@
           ]
           : [
             { label: 'run', fn: () => runFile(entry.name) },
-            { label: 'first', fn: () => configureFirst(entry.name) },
             { label: 'read', fn: () => showFile(entry.name) },
             { label: 'download', fn: () => downloadFile(entry.name) },
             { label: 'delete', fn: () => deleteFile(entry.name), danger: true }
@@ -1070,16 +1054,6 @@
     }
   }
 
-  async function configureFirst(name) {
-    try {
-      await executeLuaCapture('first(' + luaQuote(name) + ')');
-      appendOutput('-- ' + name + ' will run when this page is loaded\n');
-      await refreshFileList();
-    } catch (e) {
-      appendOutput('-- first error: ' + e.message + '\n');
-    }
-  }
-
   async function deleteFile(name) {
     if (!confirm('Delete ' + name + '?')) return;
     try {
@@ -1092,7 +1066,7 @@
   }
 
   uploadBtn.addEventListener('click', () => openUploadPicker());
-  refreshFilesBtn.addEventListener('click', () => refreshFileList());
+  refreshFilesBtn.addEventListener('click', () => { ensureAudioKeepalive(); refreshFileList(); });
 
   function supportsFileSystemPicker() {
     return typeof window?.showOpenFilePicker === 'function';

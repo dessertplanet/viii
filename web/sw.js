@@ -6,7 +6,6 @@ const APP_SHELL_FILES = [
   '/bridge.js',
   '/viii.js',
   '/viii.wasm',
-  '/timer-worker.js',
   '/manifest.webmanifest',
   '/icon.svg'
 ];
