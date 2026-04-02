@@ -88,13 +88,6 @@ static struct {
 static uint8_t enc_queue_w = 0;
 static uint8_t enc_queue_r = 0;
 
-/* When true, the connected grid uses an FTDI (or similar) USB-serial chip
- * and receives data as a plain byte stream.  We must NOT pad writes with
- * 0xFF because older firmware treats those as mext headers, desynchronising
- * the parser.  rp2040-based grids read in 64-byte USB bulk packets and
- * require 0xFF padding for alignment — that is the default (false). */
-static bool grid_ftdi_mode = false;
-
 /* libmonome device instance (mext protocol) */
 static monome_t *grid_monome = NULL;
 
@@ -235,23 +228,7 @@ int monome_platform_close(monome_t *monome) {
 ssize_t monome_platform_write(monome_t *monome, const uint8_t *buf, size_t nbyte) {
   (void)monome;
   if (!grid_connected || !buf || nbyte == 0) return 0;
-
-  if (!grid_ftdi_mode && nbyte < 64) {
-    /* rp2040 grids read in 64-byte USB bulk packets.  Pad with 0xFF so
-     * that no mext message straddles a packet boundary; the rp2040
-     * firmware's processSerial() treats 0xFF as a no-op delimiter.
-     *
-     * Older FTDI-based grids receive a plain byte stream — the 0xFF
-     * bytes would be misinterpreted as mext headers, desynchronising
-     * the parser.  When grid_ftdi_mode is set we skip padding. */
-    uint8_t padded[64];
-    memcpy(padded, buf, nbyte);
-    memset(padded + nbyte, 0xFF, 64 - nbyte);
-    js_monome_tx(padded, 64);
-  } else {
-    js_monome_tx(buf, (uint32_t)nbyte);
-  }
-
+  js_monome_tx(buf, (uint32_t)nbyte);
   return (ssize_t)nbyte;
 }
 
@@ -331,11 +308,11 @@ void viii_set_tx_debug(uint8_t enabled) {
 }
 
 /* send raw mext bytes to grid (with optional hex dump).
- * Applies 0xFF padding to 64 bytes for rp2040 grids. */
+ * Always pads to 64 bytes with 0xFF. */
 static void grid_send_raw(const uint8_t *data, uint32_t len) {
   js_grid_tx_hexdump(data, len);
 
-  if (!grid_ftdi_mode && len < 64) {
+  if (len < 64) {
     uint8_t padded[64];
     memcpy(padded, data, len);
     memset(padded + len, 0xFF, 64 - len);
@@ -911,7 +888,7 @@ void viii_grid_connect(void) {
   for (int i = 0; i < MAX_ENCODERS; i++) { arc_res_val[i] = 1; arc_accum[i] = 0; }
   for (int q = 0; q < 4; q++) grid_dirty[q] = false;
 
-  /* send discovery queries (raw mext bytes) */
+  /* send discovery queries (standard mext bytes) */
   {
     const uint8_t query_capabilities[] = {0x00};
     const uint8_t query_id[] = {0x01};
@@ -920,16 +897,6 @@ void viii_grid_connect(void) {
     grid_send(query_capabilities, sizeof(query_capabilities));
     grid_send(query_id, sizeof(query_id));
     grid_send(query_size, sizeof(query_size));
-
-    /* 0x09 is a non-standard mext command recognised only by rp2040
-     * firmware for querying encoder count.  Older firmware may choke
-     * on the unknown command, so only send it for rp2040 devices.
-     * Arc encoder count is also available from the standard system
-     * query (0x00) response — the sniffer already handles that. */
-    if (!grid_ftdi_mode) {
-      const uint8_t query_enc_count[] = {0x09};
-      grid_send(query_enc_count, sizeof(query_enc_count));
-    }
   }
 
   raw_led_all_off();
@@ -938,11 +905,6 @@ void viii_grid_connect(void) {
 EMSCRIPTEN_KEEPALIVE
 void viii_grid_disconnect(void) {
   grid_connected = false;
-}
-
-EMSCRIPTEN_KEEPALIVE
-void viii_set_ftdi_mode(uint8_t enabled) {
-  grid_ftdi_mode = enabled != 0;
 }
 
 EMSCRIPTEN_KEEPALIVE

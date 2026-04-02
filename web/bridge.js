@@ -395,12 +395,6 @@
       statusText.textContent = currentDeviceLabel();
       syncDetectedDevice();
 
-      // Detect older FTDI-based grids (VID 0x0403) vs rp2040 CDC devices.
-      const portInfo = gridPort.getInfo();
-      const isFTDI = portInfo && portInfo.usbVendorId === 0x0403;
-      wasm._viii_set_ftdi_mode(isFTDI ? 1 : 0);
-      appendOutput('-- detected ' + (isFTDI ? 'FTDI' : 'CDC') + ' device\n');
-
       // tell WASM the grid is connected (sends queries)
       wasm._viii_grid_connect();
 
