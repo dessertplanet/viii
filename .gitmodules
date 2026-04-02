@@ -1,6 +1,3 @@
 [submodule "iii"]
 	path = iii
 	url = https://codeberg.org/tehn/iii.git
-[submodule "libmonome"]
-	path = libmonome
-	url = https://github.com/monome/libmonome.git

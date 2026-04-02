@@ -1,10 +1,13 @@
 /*
  * device_web.c — device.h implementation for browser
  *
- * Bridges the Lua grid API to a physical monome grid over WebSerial
- * using libmonome mext protocol elements. LED commands from Lua are batched in a
- * local buffer and sent as LEVEL_MAP quadrants on refresh. Key events
- * from the grid are parsed and dispatched to the Lua VM.
+ * Bridges the Lua grid API to a physical monome grid/arc over WebSerial
+ * using the monome mext binary protocol.  LED commands from Lua are
+ * batched in a local buffer and sent as LEVEL_MAP quadrants on refresh.
+ * Incoming bytes are parsed by a lightweight inline mext parser and
+ * dispatched to the Lua VM as key/encoder events.
+ *
+ * No external libmonome dependency — all protocol handling is self-contained.
  */
 
 #include <stdint.h>
@@ -15,15 +18,10 @@
 
 #include "lua.h"
 #include "lauxlib.h"
-#include <monome.h>
 
 #include "device.h"
 #include "vm.h"
 #include "serial.h"
-
-/* EMBED_PROTOS build exports this constructor from libmonome mext.c */
-extern monome_t *monome_protocol_mext_new(void);
-typedef struct monome_devmap monome_devmap_t;
 
 /* ----------------------------------------------------------------
  * JS bridge — send monome protocol bytes to WebSerial
@@ -88,20 +86,12 @@ static struct {
 static uint8_t enc_queue_w = 0;
 static uint8_t enc_queue_r = 0;
 
-/* libmonome device instance (mext protocol) */
-static monome_t *grid_monome = NULL;
-
-/* incoming bytes buffered for libmonome platform_read() */
-#define MONOME_RX_BUFSIZE 8192
-static uint8_t monome_rx_buf[MONOME_RX_BUFSIZE];
-static uint32_t monome_rx_w = 0;
-static uint32_t monome_rx_r = 0;
-
-/* lightweight mext system-message sniffer for discovery responses
- * (grid size + encoder count) that libmonome parses but doesn't expose */
-static uint8_t sniffer_buf[64];
-static uint8_t sniffer_len = 0;
-static uint8_t sniffer_expected = 0;
+/* ----------------------------------------------------------------
+ * Inline mext RX parser state
+ * ---------------------------------------------------------------- */
+static uint8_t mext_rx_buf[64]; /* current message being assembled */
+static uint8_t mext_rx_len = 0; /* bytes collected so far */
+static uint8_t mext_rx_expected = 0; /* total message length expected */
 
 /* ----------------------------------------------------------------
  * Helpers
@@ -113,10 +103,6 @@ static inline int clamp_val(int v, int lo, int hi) {
 
 static inline uint8_t grid_quad_idx(uint8_t x, uint8_t y) {
   return ((y >= 8) << 1) | (x >= 8);
-}
-
-static inline uint32_t monome_rx_available(void) {
-  return monome_rx_w - monome_rx_r;
 }
 
 /* mext device→host response lengths (header byte → total message length) */
@@ -147,137 +133,96 @@ static uint8_t mext_response_len(uint8_t header) {
   }
 }
 
-/* sniff mext system responses for grid size + encoder count */
-static void sniffer_consume_byte(uint8_t byte) {
-  if (sniffer_expected == 0) {
-    /* new message header */
-    sniffer_buf[0] = byte;
-    sniffer_len = 1;
-    sniffer_expected = mext_response_len(byte);
-    if (sniffer_expected <= 1) {
-      sniffer_expected = 0;
-      sniffer_len = 0;
-    }
-    return;
-  }
+/* ----------------------------------------------------------------
+ * Mext RX parser — process one byte at a time, dispatch complete
+ * messages as system responses or input events.
+ * Replaces libmonome's mext_read_msg + event handler chain.
+ * ---------------------------------------------------------------- */
 
-  if (sniffer_len < sizeof(sniffer_buf)) {
-    sniffer_buf[sniffer_len++] = byte;
-  }
+/* forward declarations for event queuing (defined below) */
+static void queue_grid_key(uint8_t x, uint8_t y, uint8_t z);
+static void queue_enc_delta(uint8_t n, int8_t delta);
+static void queue_enc_key(uint8_t n, uint8_t z);
 
-  if (sniffer_len >= sniffer_expected) {
-    uint8_t header = sniffer_buf[0];
-    uint8_t addr = header >> 4;
-    uint8_t cmd = header & 0x0F;
+static void mext_dispatch_message(void) {
+  uint8_t header = mext_rx_buf[0];
+  uint8_t addr = header >> 4;
+  uint8_t cmd = header & 0x0F;
 
-    if (addr == 0x0) {
-      if (cmd == 0x3 && sniffer_expected == 3) {
+  switch (addr) {
+    case 0x0: /* system */
+      if (cmd == 0x3 && mext_rx_expected == 3) {
         /* grid size response: [0x03, cols, rows] */
-        uint8_t cols = sniffer_buf[1];
-        uint8_t rows = sniffer_buf[2];
+        uint8_t cols = mext_rx_buf[1];
+        uint8_t rows = mext_rx_buf[2];
         if (cols > 0 && cols <= MAX_GRID_X) grid_size_x_val = cols;
         if (rows > 0 && rows <= MAX_GRID_Y) grid_size_y_val = rows;
-      } else if (cmd == 0x0 && sniffer_expected == 3) {
+      } else if (cmd == 0x0 && mext_rx_expected == 3) {
         /* query response: [0x00, subsystem, count] */
-        uint8_t subsystem = sniffer_buf[1];
-        uint8_t count = sniffer_buf[2];
+        uint8_t subsystem = mext_rx_buf[1];
+        uint8_t count = mext_rx_buf[2];
         if (subsystem == 0x5) { /* encoder subsystem */
           arc_enc_count = count > MAX_ENCODERS ? MAX_ENCODERS : count;
           if (arc_enc_count > 0) device_is_arc = true;
         }
       }
-    }
+      break;
 
-    sniffer_expected = 0;
-    sniffer_len = 0;
+    case 0x2: /* key grid */
+      if (cmd == 0x0) { /* key up: [0x20, x, y] */
+        if (device_is_arc) queue_enc_key(mext_rx_buf[1], 0);
+        else queue_grid_key(mext_rx_buf[1], mext_rx_buf[2], 0);
+      } else if (cmd == 0x1) { /* key down: [0x21, x, y] */
+        if (device_is_arc) queue_enc_key(mext_rx_buf[1], 1);
+        else queue_grid_key(mext_rx_buf[1], mext_rx_buf[2], 1);
+      }
+      break;
+
+    case 0x5: /* encoder */
+      if (cmd == 0x0) { /* delta: [0x50, n, delta] */
+        queue_enc_delta(mext_rx_buf[1], (int8_t)mext_rx_buf[2]);
+      } else if (cmd == 0x1) { /* switch up: [0x51, n] */
+        queue_enc_key(mext_rx_buf[1], 0);
+      } else if (cmd == 0x2) { /* switch down: [0x52, n] */
+        queue_enc_key(mext_rx_buf[1], 1);
+      }
+      break;
+
+    default:
+      break; /* tilt, analog, etc. — ignored */
+  }
+}
+
+static void mext_rx_consume_byte(uint8_t byte) {
+  if (mext_rx_expected == 0) {
+    /* waiting for a new message header — skip 0xFF padding */
+    if (byte == 0xFF) return;
+
+    mext_rx_buf[0] = byte;
+    mext_rx_len = 1;
+    mext_rx_expected = mext_response_len(byte);
+    if (mext_rx_expected <= 1) {
+      /* single-byte message (or unknown) — dispatch immediately */
+      if (mext_rx_expected == 1) mext_dispatch_message();
+      mext_rx_expected = 0;
+      mext_rx_len = 0;
+    }
+    return;
+  }
+
+  if (mext_rx_len < sizeof(mext_rx_buf)) {
+    mext_rx_buf[mext_rx_len++] = byte;
+  }
+
+  if (mext_rx_len >= mext_rx_expected) {
+    mext_dispatch_message();
+    mext_rx_expected = 0;
+    mext_rx_len = 0;
   }
 }
 
 static void grid_send(const uint8_t *data, uint32_t len) {
   js_monome_tx(data, len);
-}
-
-char *monome_platform_get_dev_serial(const char *device) {
-  (void)device;
-  return NULL;
-}
-
-monome_t *monome_platform_load_protocol(const char *proto) {
-  if (proto && strcmp(proto, "mext") == 0) {
-    return monome_protocol_mext_new();
-  }
-  return NULL;
-}
-
-void monome_platform_free(monome_t *monome) {
-  free(monome);
-}
-
-int monome_platform_open(monome_t *monome, const monome_devmap_t *m, const char *dev) {
-  (void)monome;
-  (void)m;
-  (void)dev;
-  return 0;
-}
-
-int monome_platform_close(monome_t *monome) {
-  (void)monome;
-  return 0;
-}
-
-ssize_t monome_platform_write(monome_t *monome, const uint8_t *buf, size_t nbyte) {
-  (void)monome;
-  if (!grid_connected || !buf || nbyte == 0) return 0;
-  js_monome_tx(buf, (uint32_t)nbyte);
-  return (ssize_t)nbyte;
-}
-
-ssize_t monome_platform_read(monome_t *monome, uint8_t *buf, size_t nbyte) {
-  (void)monome;
-  uint32_t avail = monome_rx_available();
-  if (!buf || nbyte == 0 || avail == 0) return 0;
-
-  size_t to_read = nbyte < avail ? nbyte : (size_t)avail;
-  memcpy(buf, monome_rx_buf + monome_rx_r, to_read);
-  monome_rx_r += (uint32_t)to_read;
-
-  if (monome_rx_r == monome_rx_w) {
-    monome_rx_r = 0;
-    monome_rx_w = 0;
-  }
-
-  return (ssize_t)to_read;
-}
-
-int monome_platform_wait_for_input(monome_t *monome, unsigned int msec) {
-  (void)monome;
-  (void)msec;
-  return monome_rx_available() > 0 ? 1 : 0;
-}
-
-void *m_malloc(size_t size) {
-  return malloc(size);
-}
-
-void *m_calloc(size_t nmemb, size_t size) {
-  return calloc(nmemb, size);
-}
-
-void *m_strdup(const char *s) {
-  if (!s) return NULL;
-  size_t len = strlen(s);
-  char *out = malloc(len + 1);
-  if (!out) return NULL;
-  memcpy(out, s, len + 1);
-  return out;
-}
-
-void m_free(void *ptr) {
-  free(ptr);
-}
-
-void m_sleep(unsigned int msec) {
-  (void)msec;
 }
 
 /* ----------------------------------------------------------------
@@ -423,6 +368,10 @@ static void arc_send_refresh(void) {
  * libmonome event callbacks — handle messages FROM the grid
  * ---------------------------------------------------------------- */
 
+/* ----------------------------------------------------------------
+ * Event queuing — grid keys and encoder events
+ * ---------------------------------------------------------------- */
+
 static void queue_grid_key(uint8_t x, uint8_t y, uint8_t z) {
   uint8_t next = (key_queue_w + 1) % KEY_QUEUE_SIZE;
   if (next == key_queue_r) return;
@@ -448,51 +397,6 @@ static void queue_enc_key(uint8_t n, uint8_t z) {
   enc_queue[enc_queue_w].n = n;
   enc_queue[enc_queue_w].z = z;
   enc_queue_w = next;
-}
-
-static void handle_grid_button(uint8_t x, uint8_t y, uint8_t z) {
-  if (device_is_arc) queue_enc_key(x, z);
-  else queue_grid_key(x, y, z);
-}
-
-static void on_button_down(const monome_event_t *event, void *userdata) {
-  (void)userdata;
-  handle_grid_button((uint8_t)event->grid.x, (uint8_t)event->grid.y, 1);
-}
-
-static void on_button_up(const monome_event_t *event, void *userdata) {
-  (void)userdata;
-  handle_grid_button((uint8_t)event->grid.x, (uint8_t)event->grid.y, 0);
-}
-
-static void on_encoder_delta(const monome_event_t *event, void *userdata) {
-  (void)userdata;
-  queue_enc_delta((uint8_t)event->encoder.number, (int8_t)event->encoder.delta);
-}
-
-static void on_encoder_key_down(const monome_event_t *event, void *userdata) {
-  (void)userdata;
-  queue_enc_key((uint8_t)event->encoder.number, 1);
-}
-
-static void on_encoder_key_up(const monome_event_t *event, void *userdata) {
-  (void)userdata;
-  queue_enc_key((uint8_t)event->encoder.number, 0);
-}
-
-static void update_device_dims(void) {
-  if (!grid_monome) return;
-  int cols = monome_get_cols(grid_monome);
-  int rows = monome_get_rows(grid_monome);
-
-  if (cols > 0) {
-    if (cols > MAX_GRID_X) cols = MAX_GRID_X;
-    grid_size_x_val = (uint8_t)cols;
-  }
-  if (rows > 0) {
-    if (rows > MAX_GRID_Y) rows = MAX_GRID_Y;
-    grid_size_y_val = (uint8_t)rows;
-  }
 }
 
 /* ----------------------------------------------------------------
@@ -778,14 +682,6 @@ const char *device_str2(void) { return "viii"; }
 bool check_device_key(void) { return false; }
 
 void device_init(void) {
-  grid_monome = monome_protocol_mext_new();
-  if (grid_monome) {
-    monome_register_handler(grid_monome, MONOME_BUTTON_DOWN, on_button_down, NULL);
-    monome_register_handler(grid_monome, MONOME_BUTTON_UP, on_button_up, NULL);
-    monome_register_handler(grid_monome, MONOME_ENCODER_DELTA, on_encoder_delta, NULL);
-    monome_register_handler(grid_monome, MONOME_ENCODER_KEY_DOWN, on_encoder_key_down, NULL);
-    monome_register_handler(grid_monome, MONOME_ENCODER_KEY_UP, on_encoder_key_up, NULL);
-  }
   memset(grid_led, 0, sizeof(grid_led));
   memset(arc_ring, 0, sizeof(arc_ring));
   for (int i = 0; i < MAX_ENCODERS; i++) { arc_res_val[i] = 1; arc_accum[i] = 0; }
@@ -795,10 +691,8 @@ void device_init(void) {
   arc_intensity_pending = false;
   for (int q = 0; q < 4; q++) grid_dirty[q] = false;
   device_is_arc = false;
-  monome_rx_r = 0;
-  monome_rx_w = 0;
-  sniffer_len = 0;
-  sniffer_expected = 0;
+  mext_rx_len = 0;
+  mext_rx_expected = 0;
 }
 
 void device_task(void) {
@@ -840,47 +734,29 @@ void device_task(void) {
 
 EMSCRIPTEN_KEEPALIVE
 void viii_grid_rx(const uint8_t *data, uint32_t len) {
-  if (!grid_monome || !data || len == 0) return;
-
-  if (len > (MONOME_RX_BUFSIZE - monome_rx_w)) {
-    monome_rx_r = 0;
-    monome_rx_w = 0;
-    sniffer_len = 0;
-    sniffer_expected = 0;
-    return;
-  }
-
-  memcpy(monome_rx_buf + monome_rx_w, data, len);
-  monome_rx_w += len;
+  if (!data || len == 0) return;
 
   for (uint32_t i = 0; i < len; i++) {
-    sniffer_consume_byte(data[i]);
+    mext_rx_consume_byte(data[i]);
   }
-
-  while (monome_event_handle_next(grid_monome) > 0) {
-  }
-
-  update_device_dims();
 }
 
 /* ----------------------------------------------------------------
  * Called from JS after WebSerial connects to the grid.
- * Sends libmonome-style discovery queries.
+ * Sends standard mext discovery queries.
  * ---------------------------------------------------------------- */
 
 EMSCRIPTEN_KEEPALIVE
 void viii_grid_connect(void) {
   grid_connected = true;
 
-  /* wait for discovery replies */
+  /* reset discovery state */
   grid_size_x_val = 0;
   grid_size_y_val = 0;
   arc_enc_count = 0;
   device_is_arc = false;
-  monome_rx_r = 0;
-  monome_rx_w = 0;
-  sniffer_len = 0;
-  sniffer_expected = 0;
+  mext_rx_len = 0;
+  mext_rx_expected = 0;
 
   /* clear LED state */
   memset(grid_led, 0, sizeof(grid_led));

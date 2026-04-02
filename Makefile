@@ -3,7 +3,6 @@
 
 III_SRC = iii
 LUA_DIR = lua
-LIBMONOME_DIR = libmonome
 
 # --- Lua sources (matching iii-grid-one/lua/CMakeLists.txt) ---
 LUA_SOURCES = \
@@ -57,26 +56,7 @@ VIII_SOURCES = \
 	src/flash_web.c \
 	src/device_web.c
 
-ALL_SOURCES = $(VIII_SOURCES) $(III_SOURCES) $(LUA_SOURCES) $(LIBMONOME_PROTO_SOURCES)
-
-# --- libmonome protocol-only (minimal mext subset) ---
-LIBMONOME_PROTO_SOURCES = \
-	$(LIBMONOME_DIR)/src/libmonome.c \
-	$(LIBMONOME_DIR)/src/rotation.c \
-	$(LIBMONOME_DIR)/src/monobright.c \
-	$(LIBMONOME_DIR)/src/proto/mext.c
-
-LIBMONOME_PROTO_INCLUDES = \
-	-I $(LIBMONOME_DIR)/public \
-	-I $(LIBMONOME_DIR)/src/private \
-	-I $(LIBMONOME_DIR)/src/proto
-
-LIBMONOME_PROTO_BUILD_DIR = build/libmonome-proto
-LIBMONOME_PROTO_OBJECTS = \
-	$(LIBMONOME_PROTO_BUILD_DIR)/libmonome.o \
-	$(LIBMONOME_PROTO_BUILD_DIR)/rotation.o \
-	$(LIBMONOME_PROTO_BUILD_DIR)/monobright.o \
-	$(LIBMONOME_PROTO_BUILD_DIR)/mext.o
+ALL_SOURCES = $(VIII_SOURCES) $(III_SOURCES) $(LUA_SOURCES)
 
 # shims first so they override pico/hardware headers
 INCLUDES = \
@@ -85,12 +65,9 @@ INCLUDES = \
 	-I . \
 	-I $(III_SRC) \
 	-I $(III_SRC)/resource \
-	-I $(LUA_DIR) \
-	-I $(LIBMONOME_DIR)/public \
-	-I $(LIBMONOME_DIR)/src/private \
-	-I $(LIBMONOME_DIR)/src/proto
+	-I $(LUA_DIR)
 
-CFLAGS = -O2 -Wall -Wno-unused-function -DEMBED_PROTOS
+CFLAGS = -O2 -Wall -Wno-unused-function
 
 EXPORTED_FUNCTIONS = \
 	_viii_init,\
@@ -122,7 +99,7 @@ EMFLAGS = \
 	-s MODULARIZE=1 \
 	-s EXPORT_NAME=createVIII
 
-.PHONY: all clean serve protocol-only
+.PHONY: all clean serve
 
 all: web/viii.js
 
@@ -131,30 +108,7 @@ web/viii.js: $(ALL_SOURCES)
 	emcc $(CFLAGS) $(INCLUDES) $(EMFLAGS) $(ALL_SOURCES) -o $@
 
 clean:
-	rm -f web/viii.js web/viii.wasm web/libmonome-protocol.a
-	rm -rf $(LIBMONOME_PROTO_BUILD_DIR)
+	rm -f web/viii.js web/viii.wasm
 
 serve:
 	cd web && python3 -m http.server 8080
-
-protocol-only: web/libmonome-protocol.a
-
-web/libmonome-protocol.a: $(LIBMONOME_PROTO_OBJECTS)
-	@mkdir -p web
-	emar rcs $@ $(LIBMONOME_PROTO_OBJECTS)
-
-$(LIBMONOME_PROTO_BUILD_DIR)/libmonome.o: $(LIBMONOME_DIR)/src/libmonome.c
-	@mkdir -p $(LIBMONOME_PROTO_BUILD_DIR)
-	emcc $(CFLAGS) -DEMBED_PROTOS $(LIBMONOME_PROTO_INCLUDES) -c $< -o $@
-
-$(LIBMONOME_PROTO_BUILD_DIR)/rotation.o: $(LIBMONOME_DIR)/src/rotation.c
-	@mkdir -p $(LIBMONOME_PROTO_BUILD_DIR)
-	emcc $(CFLAGS) -DEMBED_PROTOS $(LIBMONOME_PROTO_INCLUDES) -c $< -o $@
-
-$(LIBMONOME_PROTO_BUILD_DIR)/monobright.o: $(LIBMONOME_DIR)/src/monobright.c
-	@mkdir -p $(LIBMONOME_PROTO_BUILD_DIR)
-	emcc $(CFLAGS) -DEMBED_PROTOS $(LIBMONOME_PROTO_INCLUDES) -c $< -o $@
-
-$(LIBMONOME_PROTO_BUILD_DIR)/mext.o: $(LIBMONOME_DIR)/src/proto/mext.c
-	@mkdir -p $(LIBMONOME_PROTO_BUILD_DIR)
-	emcc $(CFLAGS) -DEMBED_PROTOS $(LIBMONOME_PROTO_INCLUDES) -c $< -o $@
