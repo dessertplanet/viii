@@ -88,6 +88,13 @@ static struct {
 static uint8_t enc_queue_w = 0;
 static uint8_t enc_queue_r = 0;
 
+/* When true, the connected grid uses an FTDI (or similar) USB-serial chip
+ * and receives data as a plain byte stream.  We must NOT pad writes with
+ * 0xFF because older firmware treats those as mext headers, desynchronising
+ * the parser.  rp2040-based grids read in 64-byte USB bulk packets and
+ * require 0xFF padding for alignment — that is the default (false). */
+static bool grid_ftdi_mode = false;
+
 /* libmonome device instance (mext protocol) */
 static monome_t *grid_monome = NULL;
 
@@ -229,10 +236,14 @@ ssize_t monome_platform_write(monome_t *monome, const uint8_t *buf, size_t nbyte
   (void)monome;
   if (!grid_connected || !buf || nbyte == 0) return 0;
 
-  /* Pad each write to 64 bytes (USB full-speed bulk packet size) so that
-   * no mext message ever straddles a USB packet boundary. Padding uses
-   * 0xFF which hits the firmware's default: break in processSerial(). */
-  if (nbyte < 64) {
+  if (!grid_ftdi_mode && nbyte < 64) {
+    /* rp2040 grids read in 64-byte USB bulk packets.  Pad with 0xFF so
+     * that no mext message straddles a packet boundary; the rp2040
+     * firmware's processSerial() treats 0xFF as a no-op delimiter.
+     *
+     * Older FTDI-based grids receive a plain byte stream — the 0xFF
+     * bytes would be misinterpreted as mext headers, desynchronising
+     * the parser.  When grid_ftdi_mode is set we skip padding. */
     uint8_t padded[64];
     memcpy(padded, buf, nbyte);
     memset(padded + nbyte, 0xFF, 64 - nbyte);
@@ -292,8 +303,121 @@ void m_sleep(unsigned int msec) {
   (void)msec;
 }
 
+/* ----------------------------------------------------------------
+ * Direct mext byte construction — bypasses libmonome struct packing.
+ * Matches ansible's grid_map_mext / ring_map_mext / set_intense_mext
+ * byte-for-byte.  Used in FTDI mode to avoid potential struct layout
+ * issues under emscripten/WASM.
+ * ---------------------------------------------------------------- */
+
+/* hex-dump TX bytes to JS console (for debugging, normally off) */
+static bool grid_tx_debug = false;
+
+EM_JS(void, js_grid_tx_hexdump, (const uint8_t *data, uint32_t len), {
+  if (!Module._gridTxDebug) return;
+  var hex = [];
+  for (var i = 0; i < len; i++) {
+    hex.push(('0' + HEAPU8[data + i].toString(16)).slice(-2));
+  }
+  console.log('monome TX (' + len + '): ' + hex.join(' '));
+});
+
+EMSCRIPTEN_KEEPALIVE
+void viii_set_tx_debug(uint8_t enabled) {
+  grid_tx_debug = enabled != 0;
+  /* stash a JS-side flag so the EM_JS hexdump can check cheaply */
+  EM_ASM({ Module._gridTxDebug = $0; }, (int)grid_tx_debug);
+}
+
+/* send raw mext bytes to grid (with optional hex dump) */
+static void grid_send_raw(const uint8_t *data, uint32_t len) {
+  js_grid_tx_hexdump(data, len);
+  js_monome_tx(data, len);
+}
+
+/* LEVEL_MAP: 0x1A <x> <y> <32 packed-nybble bytes>  (35 total) */
+static void raw_level_map(uint8_t x, uint8_t y, const uint8_t *levels) {
+  uint8_t buf[35];
+  buf[0] = 0x1A;
+  buf[1] = x;
+  buf[2] = y;
+
+  uint8_t *p = buf + 3;
+  for (uint8_t r = 0; r < 8; r++) {
+    for (uint8_t j = 0; j < 4; j++) {
+      *p = (levels[0] << 4) | (levels[1] & 0x0F);
+      levels += 2;
+      p++;
+    }
+  }
+  grid_send_raw(buf, 35);
+}
+
+/* RING_MAP: 0x92 <n> <32 packed-nybble bytes>  (34 total) */
+static void raw_ring_map(uint8_t n, const uint8_t *levels) {
+  uint8_t buf[34];
+  buf[0] = 0x92;
+  buf[1] = n;
+
+  uint8_t *p = buf + 2;
+  for (uint8_t i = 0; i < 32; i++) {
+    *p = (levels[0] << 4) | (levels[1] & 0x0F);
+    levels += 2;
+    p++;
+  }
+  grid_send_raw(buf, 34);
+}
+
+/* LED_INTENSITY: 0x17 <level>  (2 bytes) */
+static void raw_led_intensity(uint8_t level) {
+  uint8_t buf[2] = { 0x17, level & 0x0F };
+  grid_send_raw(buf, 2);
+}
+
+/* RING_INTENSITY: 0x94 <level>  (2 bytes) — NOT standard;
+ * re-uses libmonome path, kept here for symmetry. */
+
+/* LED_ALL_OFF: 0x12  (1 byte) */
+static void raw_led_all_off(void) {
+  uint8_t buf[1] = { 0x12 };
+  grid_send_raw(buf, 1);
+}
+
 static void grid_send_refresh(void) {
-  if (!grid_connected || !grid_monome) return;
+  if (!grid_connected) return;
+
+  if (grid_ftdi_mode) {
+    /* ---- FTDI path: manual byte construction (ansible-style) ---- */
+    if (grid_intensity_pending) {
+      raw_led_intensity(grid_intensity_val);
+      grid_intensity_pending = false;
+    }
+
+    for (uint8_t yo = 0; yo < grid_size_y_val; yo += 8) {
+      for (uint8_t xo = 0; xo < grid_size_x_val; xo += 8) {
+        uint8_t q = grid_quad_idx(xo, yo);
+        if (!grid_dirty[q]) continue;
+
+        uint8_t levels[64];
+        for (uint8_t r = 0; r < 8; r++) {
+          for (uint8_t c = 0; c < 8; c++) {
+            uint8_t gy = yo + r;
+            uint8_t gx = xo + c;
+            if (gx < grid_size_x_val && gy < grid_size_y_val)
+              levels[r * 8 + c] = grid_led[gy * MAX_GRID_X + gx];
+            else
+              levels[r * 8 + c] = 0;
+          }
+        }
+        raw_level_map(xo, yo, levels);
+        grid_dirty[q] = false;
+      }
+    }
+    return;
+  }
+
+  /* ---- rp2040 / CDC path: use libmonome ---- */
+  if (!grid_monome) return;
 
   if (grid_intensity_pending) {
     monome_led_intensity(grid_monome, grid_intensity_val);
@@ -323,7 +447,28 @@ static void grid_send_refresh(void) {
 }
 
 static void arc_send_refresh(void) {
-  if (!grid_connected || !grid_monome) return;
+  if (!grid_connected) return;
+
+  if (grid_ftdi_mode) {
+    /* ---- FTDI path: manual byte construction ---- */
+    if (arc_intensity_pending) {
+      /* no standard raw intensity for rings; use libmonome if available */
+      if (grid_monome)
+        monome_led_ring_intensity(grid_monome, arc_intensity_val);
+      arc_intensity_pending = false;
+    }
+
+    uint8_t ring_count = arc_enc_count;
+    if (device_is_arc && ring_count == 0) ring_count = MAX_ENCODERS;
+
+    for (uint8_t n = 0; n < ring_count; n++) {
+      raw_ring_map(n, arc_ring[n]);
+    }
+    return;
+  }
+
+  /* ---- rp2040 / CDC path: use libmonome ---- */
+  if (!grid_monome) return;
 
   if (arc_intensity_pending) {
     monome_led_ring_intensity(grid_monome, arc_intensity_val);
@@ -812,15 +957,25 @@ void viii_grid_connect(void) {
     const uint8_t query_capabilities[] = {0x00};
     const uint8_t query_id[] = {0x01};
     const uint8_t query_size[] = {0x05};
-    const uint8_t query_enc_count[] = {0x09};
 
     grid_send(query_capabilities, sizeof(query_capabilities));
     grid_send(query_id, sizeof(query_id));
     grid_send(query_size, sizeof(query_size));
-    grid_send(query_enc_count, sizeof(query_enc_count));
+
+    /* 0x09 is a non-standard mext command recognised only by rp2040
+     * firmware for querying encoder count.  Older firmware may choke
+     * on the unknown command, so only send it for rp2040 devices.
+     * Arc encoder count is also available from the standard system
+     * query (0x00) response — the sniffer already handles that. */
+    if (!grid_ftdi_mode) {
+      const uint8_t query_enc_count[] = {0x09};
+      grid_send(query_enc_count, sizeof(query_enc_count));
+    }
   }
 
-  if (grid_monome) {
+  if (grid_ftdi_mode) {
+    raw_led_all_off();
+  } else if (grid_monome) {
     monome_led_all(grid_monome, 0);
   }
 }
@@ -828,6 +983,11 @@ void viii_grid_connect(void) {
 EMSCRIPTEN_KEEPALIVE
 void viii_grid_disconnect(void) {
   grid_connected = false;
+}
+
+EMSCRIPTEN_KEEPALIVE
+void viii_set_ftdi_mode(uint8_t enabled) {
+  grid_ftdi_mode = enabled != 0;
 }
 
 EMSCRIPTEN_KEEPALIVE

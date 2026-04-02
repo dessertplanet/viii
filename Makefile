@@ -100,6 +100,8 @@ EXPORTED_FUNCTIONS = \
 	_viii_grid_connect,\
 	_viii_grid_disconnect,\
 	_viii_set_arc_mode,\
+	_viii_set_ftdi_mode,\
+	_viii_set_tx_debug,\
 	_viii_grid_size_x,\
 	_viii_grid_size_y,\
 	_viii_arc_enc_count,\
