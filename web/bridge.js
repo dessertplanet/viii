@@ -64,20 +64,97 @@
   }
 
   // ================================================================
-  // AudioContext keepalive — prevents background tab throttling
+  // AudioContext keepalive + timer — prevents background tab throttling
+  // and drives the main loop + metro timing from the audio thread.
+  // ScriptProcessorNode.onaudioprocess fires reliably even when the
+  // tab is backgrounded, unlike Worker setInterval.
   // ================================================================
 
   let keepaliveCtx = null;
+  let audioTimerNode = null;
+
+  // Metro timing state (managed on main thread, driven by audio callback)
+  const metroState = {};        // index -> { intervalMs, nextTickAt }
+  let loopIntervalMs = 4;       // ~250Hz main loop
+  let loopNextTickAt = 0;
 
   function ensureAudioKeepalive() {
-    if (keepaliveCtx) return;
-    keepaliveCtx = new AudioContext();
-    const osc = keepaliveCtx.createOscillator();
+    if (!keepaliveCtx) {
+      try {
+        keepaliveCtx = new AudioContext({ sampleRate: 44100 });
+      } catch (e) {
+        console.error('AudioContext failed:', e);
+        return;
+      }
+    }
+    if (keepaliveCtx.state === 'suspended') {
+      keepaliveCtx.resume();
+    }
+    startAudioTimer();
+  }
+
+  function startAudioTimer() {
+    if (audioTimerNode || !keepaliveCtx) return;
+
+    // ScriptProcessorNode with bufferSize 256 at 44100Hz ≈ fires every ~5.8ms
+    audioTimerNode = keepaliveCtx.createScriptProcessor(256, 1, 1);
+    audioTimerNode.onaudioprocess = function () {
+      if (!wasm) return;
+      const now = performance.now();
+
+      // main loop
+      if (now >= loopNextTickAt) {
+        loopNextTickAt = now + loopIntervalMs;
+        try { wasm._viii_loop(); } catch (e) {
+          console.error('loop error:', e);
+        }
+      }
+
+      // metros
+      for (const idx in metroState) {
+        const m = metroState[idx];
+        if (now >= m.nextTickAt) {
+          m.nextTickAt = now + m.intervalMs;
+          try { wasm._viii_metro_tick(parseInt(idx)); } catch (e) {
+            console.error('metro error:', e);
+          }
+        }
+      }
+    };
+
+    // connect through a silent gain so audio output stays quiet
     const gain = keepaliveCtx.createGain();
     gain.gain.value = 0;
-    osc.connect(gain);
+    audioTimerNode.connect(gain);
     gain.connect(keepaliveCtx.destination);
-    osc.start();
+
+    loopNextTickAt = performance.now();
+  }
+
+  // API used by metro_web.c via Module._timerWorker shim
+  function createTimerShim() {
+    return {
+      postMessage: function (msg) {
+        switch (msg.type) {
+          case 'startLoop':
+            loopIntervalMs = msg.intervalMs || 4;
+            loopNextTickAt = performance.now();
+            break;
+          case 'stopLoop':
+            loopIntervalMs = Infinity;
+            break;
+          case 'startMetro':
+            metroState[msg.index] = {
+              intervalMs: msg.intervalMs,
+              nextTickAt: performance.now() + msg.intervalMs
+            };
+            break;
+          case 'stopMetro':
+            delete metroState[msg.index];
+            break;
+        }
+      }
+    };
   }
 
   // ================================================================
@@ -85,7 +162,6 @@
   // ================================================================
 
   let wasm = null;
-  let timerWorker = null;
 
   async function initWasm() {
     wasm = await createVIII({
@@ -119,30 +195,19 @@
       console.warn('Could not load filesystem from IndexedDB:', e);
     }
 
-    // create timer worker BEFORE viii_init so metros started
+    // create audio-driven timer BEFORE viii_init so metros started
     // during lib.lua init (e.g. slew) have a timer to use
-    timerWorker = new Worker('timer-worker.js');
+    ensureAudioKeepalive();
+    const timerShim = createTimerShim();
 
-    // expose worker on Module so EM_JS in metro_web.c can use it
-    wasm._timerWorker = timerWorker;
+    // expose shim on Module so EM_JS in metro_web.c can use it
+    wasm._timerWorker = timerShim;
 
-    // route worker messages to WASM
-    timerWorker.onmessage = function (e) {
-      if (!wasm) return;
-      try {
-        if (e.data.type === 'loop') {
-          wasm._viii_loop();
-        } else if (e.data.type === 'metro') {
-          wasm._viii_metro_tick(e.data.index);
-        }
-      } catch (err) {
-        console.error('worker callback error:', err);
-        appendOutput('\n-- error: ' + err.message + '\n');
-      }
-    };
+    // start the audio-thread timer (drives main loop + metros)
+    startAudioTimer();
 
     // start the main loop at ~250Hz
-    timerWorker.postMessage({ type: 'startLoop', intervalMs: 4 });
+    timerShim.postMessage({ type: 'startLoop', intervalMs: 4 });
 
     // NOW initialize the iii VM (lib.lua's slew.init will find the worker ready)
     wasm._viii_init();
