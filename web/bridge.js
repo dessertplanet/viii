@@ -111,7 +111,8 @@
 
       // main loop
       if (now >= loopNextTickAt) {
-        loopNextTickAt = now + loopIntervalMs;
+        loopNextTickAt += loopIntervalMs;
+        if (loopNextTickAt < now) loopNextTickAt = now + loopIntervalMs;
         try { wasm._viii_loop(); } catch (e) {
           console.error('loop error:', e);
         }
