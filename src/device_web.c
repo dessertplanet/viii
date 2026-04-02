@@ -304,10 +304,11 @@ void m_sleep(unsigned int msec) {
 }
 
 /* ----------------------------------------------------------------
- * Direct mext byte construction — bypasses libmonome struct packing.
- * Matches ansible's grid_map_mext / ring_map_mext / set_intense_mext
- * byte-for-byte.  Used in FTDI mode to avoid potential struct layout
- * issues under emscripten/WASM.
+ * Direct mext byte construction for LED output.
+ * Matches ansible's grid_map_mext / ring_map_mext byte-for-byte.
+ * Used for all devices — simpler and avoids libmonome struct-packing
+ * issues under emscripten/WASM.  libmonome is still used for
+ * incoming event parsing (RX).
  * ---------------------------------------------------------------- */
 
 /* hex-dump TX bytes to JS console (for debugging, normally off) */
@@ -329,10 +330,19 @@ void viii_set_tx_debug(uint8_t enabled) {
   EM_ASM({ Module._gridTxDebug = $0; }, (int)grid_tx_debug);
 }
 
-/* send raw mext bytes to grid (with optional hex dump) */
+/* send raw mext bytes to grid (with optional hex dump).
+ * Applies 0xFF padding to 64 bytes for rp2040 grids. */
 static void grid_send_raw(const uint8_t *data, uint32_t len) {
   js_grid_tx_hexdump(data, len);
-  js_monome_tx(data, len);
+
+  if (!grid_ftdi_mode && len < 64) {
+    uint8_t padded[64];
+    memcpy(padded, data, len);
+    memset(padded + len, 0xFF, 64 - len);
+    js_monome_tx(padded, 64);
+  } else {
+    js_monome_tx(data, len);
+  }
 }
 
 /* LEVEL_MAP: 0x1A <x> <y> <32 packed-nybble bytes>  (35 total) */
@@ -374,8 +384,11 @@ static void raw_led_intensity(uint8_t level) {
   grid_send_raw(buf, 2);
 }
 
-/* RING_INTENSITY: 0x94 <level>  (2 bytes) — NOT standard;
- * re-uses libmonome path, kept here for symmetry. */
+/* RING_INTENSITY: 0x94 <level>  (2 bytes) */
+static void raw_ring_intensity(uint8_t level) {
+  uint8_t buf[2] = { 0x94, level & 0x0F };
+  grid_send_raw(buf, 2);
+}
 
 /* LED_ALL_OFF: 0x12  (1 byte) */
 static void raw_led_all_off(void) {
@@ -386,41 +399,8 @@ static void raw_led_all_off(void) {
 static void grid_send_refresh(void) {
   if (!grid_connected) return;
 
-  if (grid_ftdi_mode) {
-    /* ---- FTDI path: manual byte construction (ansible-style) ---- */
-    if (grid_intensity_pending) {
-      raw_led_intensity(grid_intensity_val);
-      grid_intensity_pending = false;
-    }
-
-    for (uint8_t yo = 0; yo < grid_size_y_val; yo += 8) {
-      for (uint8_t xo = 0; xo < grid_size_x_val; xo += 8) {
-        uint8_t q = grid_quad_idx(xo, yo);
-        if (!grid_dirty[q]) continue;
-
-        uint8_t levels[64];
-        for (uint8_t r = 0; r < 8; r++) {
-          for (uint8_t c = 0; c < 8; c++) {
-            uint8_t gy = yo + r;
-            uint8_t gx = xo + c;
-            if (gx < grid_size_x_val && gy < grid_size_y_val)
-              levels[r * 8 + c] = grid_led[gy * MAX_GRID_X + gx];
-            else
-              levels[r * 8 + c] = 0;
-          }
-        }
-        raw_level_map(xo, yo, levels);
-        grid_dirty[q] = false;
-      }
-    }
-    return;
-  }
-
-  /* ---- rp2040 / CDC path: use libmonome ---- */
-  if (!grid_monome) return;
-
   if (grid_intensity_pending) {
-    monome_led_intensity(grid_monome, grid_intensity_val);
+    raw_led_intensity(grid_intensity_val);
     grid_intensity_pending = false;
   }
 
@@ -440,7 +420,7 @@ static void grid_send_refresh(void) {
             levels[r * 8 + c] = 0;
         }
       }
-      monome_led_level_map(grid_monome, xo, yo, levels);
+      raw_level_map(xo, yo, levels);
       grid_dirty[q] = false;
     }
   }
@@ -449,29 +429,8 @@ static void grid_send_refresh(void) {
 static void arc_send_refresh(void) {
   if (!grid_connected) return;
 
-  if (grid_ftdi_mode) {
-    /* ---- FTDI path: manual byte construction ---- */
-    if (arc_intensity_pending) {
-      /* no standard raw intensity for rings; use libmonome if available */
-      if (grid_monome)
-        monome_led_ring_intensity(grid_monome, arc_intensity_val);
-      arc_intensity_pending = false;
-    }
-
-    uint8_t ring_count = arc_enc_count;
-    if (device_is_arc && ring_count == 0) ring_count = MAX_ENCODERS;
-
-    for (uint8_t n = 0; n < ring_count; n++) {
-      raw_ring_map(n, arc_ring[n]);
-    }
-    return;
-  }
-
-  /* ---- rp2040 / CDC path: use libmonome ---- */
-  if (!grid_monome) return;
-
   if (arc_intensity_pending) {
-    monome_led_ring_intensity(grid_monome, arc_intensity_val);
+    raw_ring_intensity(arc_intensity_val);
     arc_intensity_pending = false;
   }
 
@@ -479,7 +438,7 @@ static void arc_send_refresh(void) {
   if (device_is_arc && ring_count == 0) ring_count = MAX_ENCODERS;
 
   for (uint8_t n = 0; n < ring_count; n++) {
-    monome_led_ring_map(grid_monome, n, arc_ring[n]);
+    raw_ring_map(n, arc_ring[n]);
   }
 }
 
@@ -973,11 +932,7 @@ void viii_grid_connect(void) {
     }
   }
 
-  if (grid_ftdi_mode) {
-    raw_led_all_off();
-  } else if (grid_monome) {
-    monome_led_all(grid_monome, 0);
-  }
+  raw_led_all_off();
 }
 
 EMSCRIPTEN_KEEPALIVE
