@@ -386,6 +386,11 @@
         bufferSize: 1024
       });
 
+      // Assert DTR/RTS so the device enables its serial TX.
+      // macOS typically does this implicitly on open; Windows and
+      // Linux may not, depending on driver defaults.
+      await gridPort.setSignals({ dataTerminalReady: true, requestToSend: true });
+
       gridWriter = gridPort.writable.getWriter();
       gridConnected = true;
       gridAutoReconnect = true;
