@@ -399,6 +399,21 @@ main {
   background: var(--btn-hover);
 }
 
+.output-float-link {
+  position: absolute;
+  right: 12px;
+  top: 40px;
+  z-index: 5;
+  color: var(--dim);
+  font-family: var(--font);
+  font-size: 13px;
+  text-decoration: underline;
+}
+
+.output-float-link:hover {
+  color: var(--fg);
+}
+
 /* ---- repl input ---- */
 
 .repl-input-container {
