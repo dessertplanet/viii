@@ -64,6 +64,23 @@
   }
 
   // ================================================================
+  // AudioContext keepalive — prevents background tab throttling
+  // ================================================================
+
+  let keepaliveCtx = null;
+
+  function ensureAudioKeepalive() {
+    if (keepaliveCtx) return;
+    keepaliveCtx = new AudioContext();
+    const osc = keepaliveCtx.createOscillator();
+    const gain = keepaliveCtx.createGain();
+    gain.gain.value = 0;
+    osc.connect(gain);
+    gain.connect(keepaliveCtx.destination);
+    osc.start();
+  }
+
+  // ================================================================
   // WASM module setup
   // ================================================================
 
@@ -291,6 +308,7 @@
 
   function arcKeyDown() {
     if (!wasm) return;
+    ensureAudioKeepalive();
     arcKeyBtn.classList.add('pressed');
     appendOutput('>> event_arc_key(1)\n');
     wasm._viii_arc_key(1);
@@ -315,6 +333,7 @@
   replInput.addEventListener('keydown', function (e) {
     if (e.key === 'Enter' && !e.shiftKey) {
       e.preventDefault();
+      ensureAudioKeepalive();
       const code = replInput.value.trim();
       if (!code) return;
 
@@ -606,6 +625,7 @@
   }
 
   gridBtn.addEventListener('click', () => {
+    ensureAudioKeepalive();
     if (gridConnected) gridDisconnect();
     else gridConnect();
   });
