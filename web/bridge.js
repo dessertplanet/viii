@@ -816,12 +816,14 @@
   }
 
   midiOutSelect.addEventListener('change', () => {
+    ensureAudioKeepalive();
     midiPanic();
     midiOutPort = midiAccess ? midiAccess.outputs.get(midiOutSelect.value) || null : null;
     try { localStorage.setItem('viii.midiOut', midiOutSelect.value); } catch {}
   });
 
   midiInSelect.addEventListener('change', () => {
+    ensureAudioKeepalive();
     const port = midiAccess ? midiAccess.inputs.get(midiInSelect.value) || null : null;
     setMidiInput(port);
     try { localStorage.setItem('viii.midiIn', midiInSelect.value); } catch {}
@@ -1071,7 +1073,7 @@
     }
   }
 
-  uploadBtn.addEventListener('click', () => openUploadPicker());
+  uploadBtn.addEventListener('click', () => { ensureAudioKeepalive(); openUploadPicker(); });
   refreshFilesBtn.addEventListener('click', () => { ensureAudioKeepalive(); refreshFileList(); });
 
   function supportsFileSystemPicker() {
@@ -1199,12 +1201,14 @@
   });
 
   restartBtn.addEventListener('click', () => {
+    ensureAudioKeepalive();
     appendOutput('> ^^i\n');
     sendReplLine('^^i');
     setTimeout(() => refreshFileList(), 500);
   });
 
   reformatBtn.addEventListener('click', async () => {
+    ensureAudioKeepalive();
     if (!confirm('Reformat filesystem? This will erase all files.')) return;
     try {
       await executeLuaCapture('fs_reformat()');
