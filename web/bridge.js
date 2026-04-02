@@ -292,12 +292,14 @@
   function arcKeyDown() {
     if (!wasm) return;
     arcKeyBtn.classList.add('pressed');
+    appendOutput('>> event_arc_key(1)\n');
     wasm._viii_arc_key(1);
   }
 
   function arcKeyUp() {
     if (!wasm) return;
     arcKeyBtn.classList.remove('pressed');
+    appendOutput('>> event_arc_key(0)\n');
     wasm._viii_arc_key(0);
   }
 
