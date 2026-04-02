@@ -266,6 +266,30 @@
     }
   }
 
+  // ---- arc key button ----
+  const arcKeyBtn = document.getElementById('arcKeyBtn');
+
+  function arcKeyDown() {
+    if (!wasm) return;
+    arcKeyBtn.classList.add('pressed');
+    wasm._viii_arc_key(1);
+  }
+
+  function arcKeyUp() {
+    if (!wasm) return;
+    arcKeyBtn.classList.remove('pressed');
+    wasm._viii_arc_key(0);
+  }
+
+  arcKeyBtn.addEventListener('mousedown', (e) => { e.preventDefault(); arcKeyDown(); });
+  arcKeyBtn.addEventListener('mouseup', arcKeyUp);
+  arcKeyBtn.addEventListener('mouseleave', () => {
+    if (arcKeyBtn.classList.contains('pressed')) arcKeyUp();
+  });
+  arcKeyBtn.addEventListener('touchstart', (e) => { e.preventDefault(); arcKeyDown(); }, { passive: false });
+  arcKeyBtn.addEventListener('touchend', (e) => { e.preventDefault(); arcKeyUp(); });
+  arcKeyBtn.addEventListener('touchcancel', arcKeyUp);
+
   replInput.addEventListener('keydown', function (e) {
     if (e.key === 'Enter' && !e.shiftKey) {
       e.preventDefault();
@@ -1072,9 +1096,15 @@
   const restartBtn = document.getElementById('restartBtn');
   const reformatBtn = document.getElementById('reformatBtn');
   const clearBtn = document.getElementById('clearBtn');
+  const midiPanicBtn = document.getElementById('midiPanicBtn');
 
   clearBtn.addEventListener('click', () => {
     if (outputEl) outputEl.textContent = '';
+  });
+
+  midiPanicBtn.addEventListener('click', () => {
+    midiPanic();
+    appendOutput('-- midi panic: all notes off\n');
   });
 
   restartBtn.addEventListener('click', () => {

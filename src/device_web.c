@@ -805,3 +805,8 @@ EMSCRIPTEN_KEEPALIVE
 uint8_t viii_arc_enc_count(void) {
   return arc_enc_count;
 }
+
+EMSCRIPTEN_KEEPALIVE
+void viii_arc_key(uint8_t z) {
+  queue_enc_key(0, z);
+}

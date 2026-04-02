@@ -44,13 +44,17 @@
     <div id="replPane" class="pane">
       <div class="output-container">
         <div id="output" class="output"></div>
-        <button id="clearBtn" class="output-clear-btn" title="clear output">clear</button>
+        <button id="midiPanicBtn" class="output-float-btn" title="midi panic — all notes off" style="right: 80px;">panic</button>
+        <button id="clearBtn" class="output-float-btn" title="clear output">clear</button>
       </div>
       <div class="repl-toolbar">
         <button id="gridBtn" class="toolbar-btn">connect</button>
         <button id="uploadBtn" class="toolbar-btn">upload</button>
         <button id="restartBtn" class="toolbar-btn" title="restart (^^i)">reboot</button>
         <button id="reformatBtn" class="toolbar-btn" title="reformat filesystem">reformat</button>
+        <span class="toolbar-spacer"></span>
+        <span class="arc-key-label">arc key</span>
+        <button type="button" id="arcKeyBtn" class="arc-key-btn" title="arc key"></button>
       </div>
       <div class="repl-input-container">
         <div class="repl-input-row">
