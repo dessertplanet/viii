@@ -121,8 +121,10 @@
       for (const idx in metroState) {
         const m = metroState[idx];
         if (now >= m.nextTickAt) {
-          m.nextTickAt = now + m.intervalMs;
-          try { wasm._viii_metro_tick(parseInt(idx)); } catch (e) {
+          m.nextTickAt += m.intervalMs;
+          // if we fell far behind, reset to avoid burst-firing
+          if (m.nextTickAt < now) m.nextTickAt = now + m.intervalMs;
+          try { wasm._viii_metro_tick(m.index); } catch (e) {
             console.error('metro error:', e);
           }
         }
@@ -154,6 +156,7 @@
             break;
           case 'startMetro':
             metroState[msg.index] = {
+              index: msg.index,
               intervalMs: msg.intervalMs,
               nextTickAt: performance.now() + msg.intervalMs
             };
@@ -162,7 +165,6 @@
             delete metroState[msg.index];
             break;
         }
-        // forward to fallback worker if audio timer isn't active yet
       }
     };
   }
@@ -236,7 +238,10 @@
       try { wasm._viii_loop(); } catch(e) { /* ignore */ }
     }, 10);
     setTimeout(async () => {
-      try { await refreshFileList(); } catch(e) { /* ignore */ }
+      try {
+        await refreshFileList();
+        audioTimerStarted = true;  // prevent duplicate refresh on first gesture
+      } catch(e) { /* ignore */ }
       clearInterval(initPump);
     }, 50);
   }
