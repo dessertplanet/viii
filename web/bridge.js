@@ -159,6 +159,24 @@
   let captureSeq = 0;
   let serialLineBuf = '';
 
+  // ---- output suppression queue (same pattern as web-diii) ----
+  let suppressedLines = [];
+
+  function queueSuppressedLine(line, ttlMs) {
+    if (!line) return;
+    suppressedLines.push({ line: String(line), expiresAt: Date.now() + (ttlMs || 2500) });
+  }
+
+  function shouldSuppressLine(line) {
+    if (!suppressedLines.length) return false;
+    const now = Date.now();
+    suppressedLines = suppressedLines.filter(e => e.expiresAt > now);
+    const idx = suppressedLines.findIndex(e => e.line === line);
+    if (idx === -1) return false;
+    suppressedLines.splice(idx, 1);
+    return true;
+  }
+
   function appendOutput(text) {
     if (!outputEl) return;
     outputEl.appendChild(document.createTextNode(text));
@@ -200,8 +218,10 @@
           continue;
         }
       }
-      // not captured — show in terminal
-      appendOutput(line + '\n');
+      // not captured — check suppression, then show in terminal
+      if (!shouldSuppressLine(line)) {
+        appendOutput(line + '\n');
+      }
     }
 
     // flush partial line after a short delay (same pattern as web-diii)
@@ -923,6 +943,8 @@
   });
 
   async function runFile(name) {
+    queueSuppressedLine('-- re-init with no script', 8000);
+    queueSuppressedLine('-- init: skip script', 8000);
     appendOutput('-- running ' + name + '...\n');
     sendReplLine('^^c');
     await delay(500);
@@ -1031,6 +1053,8 @@
     }
 
     appendOutput('-- r: refreshing ' + name + '\\n');
+    queueSuppressedLine('-- re-init with no script', 8000);
+    queueSuppressedLine('-- init: skip script', 8000);
     sendReplLine('^^c');
     await delay(200);
     await uploadScript(name, text, lastUploadedScript.fileHandle);
