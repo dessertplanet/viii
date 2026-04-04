@@ -24,7 +24,7 @@ Note on Windows you will need to have an [FTDI Virtual COM Port driver](https://
 - Use the **upload** button (or drag and drop) to add `.lua` scripts
 - Click the **▶** button next to any `.lua` file in the file list
 - Type `r` in the REPL to re-upload and run the last uploaded script (useful for iterating)
-- Scripts are available at [codeberg.org/tehn/iii-scripts](https://codeberg.org/tehn/iii-scripts)
+- Some scripts to get you started are available at [codeberg.org/tehn/iii-scripts](https://codeberg.org/tehn/iii-scripts)
 
 ### REPL
 
@@ -47,7 +47,7 @@ Note that to send midi to other apps on your host you may need to enable some ki
 
 ### Arc key
 
-The **arc key** button in the toolbar sends `event_arc_key(1)` on press and `event_arc_key(0)` on release, simulating the physical arc push-switch that is absent on older arc models. You can also call these commands inside a script for the same effect or event map midi events to them for external control. For example:
+The **arc key** button in the toolbar sends `event_arc_key(1)` on press and `event_arc_key(0)` on release, simulating the physical arc push-switch that is absent on older arc models. You can also call these commands inside a script for the same effect or even map midi events to them for external control. For example:
 
 ```lua
 -- Map MIDI note 21 to arc key event
