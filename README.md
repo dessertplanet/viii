@@ -51,15 +51,22 @@ The **arc key** button in the toolbar sends `event_arc_key(1)` on press and `eve
 
 ```lua
 -- Map MIDI note 21 to arc key event
-function event_midi_note_on(chan, note, vel)
-    if note == 21 then
-        event_arc_key(1)
-    end
-end
+-- event_midi receives raw MIDI bytes: status, data1, data2
+local NOTE_ON = 0x90   -- note on status (channel in lower nibble)
+local NOTE_OFF = 0x80  -- note off status
+local STATUS_MASK = 0xF0
+local TARGET_NOTE = 21
 
-function event_midi_note_off(chan, note, vel)
-    if note == 21 then
-        event_arc_key(0)
+function event_midi(d1, d2, d3)
+    local status = d1 & STATUS_MASK
+    local note = d2
+    local velocity = d3
+    if note == TARGET_NOTE then
+        if status == NOTE_ON and velocity > 0 then
+            event_arc_key(1)
+        elseif status == NOTE_OFF or (status == NOTE_ON and velocity == 0) then
+            event_arc_key(0)
+        end
     end
 end
 ```
