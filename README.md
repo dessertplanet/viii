@@ -50,12 +50,17 @@ Note that to send midi to other apps on your host you may need to enable some ki
 The **arc key** button in the toolbar sends `event_arc_key(1)` on press and `event_arc_key(0)` on release, simulating the physical arc push-switch that is absent on older arc models. You can also call these commands inside a script for the same effect or even map midi events to them for external control. For example:
 
 ```lua
--- Map MIDI note 21 to arc key event
--- event_midi receives raw MIDI bytes: status, data1, data2
+-- Map MIDI note 60 (middle-c) to arc key event
+-- event_midi receives raw MIDI bytes
 local NOTE_ON = 0x90   -- note on status (channel in lower nibble)
 local NOTE_OFF = 0x80  -- note off status
 local STATUS_MASK = 0xF0
-local TARGET_NOTE = 21
+local TARGET_NOTE = 60
+
+-- z is 1 for press, 0 for release
+function event_arc_key(z)
+    print("arc key: " .. z)
+end
 
 function event_midi(d1, d2, d3)
     local status = d1 & STATUS_MASK
