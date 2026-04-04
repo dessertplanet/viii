@@ -3,7 +3,7 @@
  *
  * Responsibilities:
  *   - IndexedDB filesystem persistence
- *   - WebSerial connection to monome grid (binary protocol)
+ *   - WebSerial connection to monome grid/arc (binary protocol)
  *   - WebMIDI input/output routing
  *   - REPL terminal I/O
  *   - Main loop scheduling

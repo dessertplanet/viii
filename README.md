@@ -130,3 +130,4 @@ Important touchpoints from the monome open-source extended universe that were in
 - The [ansible](https://github.com/monome/ansible) and [norns](https://github.com/monome/norns) firmwares
 - The [grid](https://codeberg.org/tehn/iii-grid-one) and [arc](https://codeberg.org/tehn/iii-arc) iii firmwares
 - The [iii](https://codeberg.org/tehn/iii) platform itself
+- The [diii](https://github.com/monome/web-diii) tool I made for monome that works with iii-compatible devices

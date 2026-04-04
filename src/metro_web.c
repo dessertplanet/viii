@@ -1,7 +1,7 @@
 /*
  * metro_web.c — metro.h implementation for browser
  *
- * Uses a Web Worker for timing (not throttled in background tabs).
+ * This is only used as a fallback now that the WebAudio API provides more accurate timing
  * Each metro tick sets a pending flag that metro_task() checks on
  * the main loop iteration. Since JS is single-threaded on the main
  * thread, no locking is needed.

@@ -7,7 +7,6 @@
  * Incoming bytes are parsed by a lightweight inline mext parser and
  * dispatched to the Lua VM as key/encoder events.
  *
- * No external libmonome dependency — all protocol handling is self-contained.
  */
 
 #include <stdint.h>
@@ -229,8 +228,7 @@ static void grid_send(const uint8_t *data, uint32_t len) {
  * Direct mext byte construction for LED output.
  * Matches ansible's grid_map_mext / ring_map_mext byte-for-byte.
  * Used for all devices — simpler and avoids libmonome struct-packing
- * issues under emscripten/WASM.  libmonome is still used for
- * incoming event parsing (RX).
+ * issues under emscripten/WASM.
  * ---------------------------------------------------------------- */
 
 /* hex-dump TX bytes to JS console (for debugging, normally off) */
